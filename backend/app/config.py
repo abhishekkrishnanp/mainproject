@@ -31,11 +31,13 @@ class Settings(BaseSettings):
     
     # AI / LLM Configuration (Configurable model, no hardcoded keys)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    CHAT_MAX_HISTORY: int = int(os.getenv("CHAT_MAX_HISTORY", "20"))
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
     
     class Config:
         case_sensitive = True
+        extra = "ignore"
         env_file = ".env"
 
 settings = Settings()

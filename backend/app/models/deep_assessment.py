@@ -63,9 +63,12 @@ class CareerRecommendationRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(String(50), index=True, nullable=False)
     career_name = Column(String(255), nullable=False)
-    match_score = Column(Float, nullable=False) # percentage 0-100
+    match_score = Column(Float, nullable=False)  # percentage 0-100
     reason = Column(Text, nullable=False)
-    supporting_evidence = Column(JSON, nullable=True) # list of points from interview
-    concerns = Column(JSON, nullable=True) # list of potential concerns
-    skills_needed = Column(JSON, nullable=True) # list of skills to develop
+    supporting_evidence = Column(JSON, nullable=True)    # list of strings from interview
+    concerns = Column(JSON, nullable=True)               # list of potential concerns
+    skills_needed = Column(JSON, nullable=True)          # list of skills to develop
+    suggested_projects = Column(JSON, nullable=True)     # portfolio-worthy project ideas
+    immediate_next_steps = Column(JSON, nullable=True)   # concrete immediate actions
+    roadmap_stages = Column(JSON, nullable=True)         # 3-stage learning roadmap
     created_at = Column(DateTime, default=datetime.utcnow)

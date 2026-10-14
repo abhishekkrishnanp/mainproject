@@ -98,9 +98,23 @@ function StageCard({ item, idx }) {
                   <ExternalLink size={14} /> Recommended Resources
                 </div>
                 <ul style={{ paddingLeft: "1rem", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-                  {(item.resources || []).map((r, i) => (
-                    <li key={i} style={{ fontSize: "0.83rem", color: "#a5b4fc" }}>{r}</li>
-                  ))}
+                  {(item.resources || []).map((r, i) => {
+                    const isObj = typeof r === "object" && r !== null;
+                    const name = isObj ? r.name || r.title || "Resource Link" : String(r);
+                    const url = isObj ? r.url : null;
+                    const rType = isObj && r.type ? ` (${r.type})` : "";
+                    return (
+                      <li key={i} style={{ fontSize: "0.83rem" }}>
+                        {url ? (
+                          <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#a5b4fc", textDecoration: "underline" }}>
+                            {name}{rType}
+                          </a>
+                        ) : (
+                          <span style={{ color: "#a5b4fc" }}>{name}{rType}</span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}

@@ -244,22 +244,23 @@ class Phase1ComprehensiveTests(unittest.TestCase):
             self.assertTrue("Based on your responses" in r["reason"], "Must use responsible guidance phrasing")
 
     def test_06_future_agent_placeholders(self):
-        """Test future agent API endpoints return appropriate Phase 2-5 responses."""
+        """Test multi-agent API endpoints return live agent analysis and evidence."""
         res_m = client.post("/market-analysis", json={"career": "AI Engineer"})
         self.assertEqual(res_m.status_code, 200)
-        self.assertEqual(res_m.json()["status"], "placeholder_ready_for_phase_2")
+        self.assertIn("career_title", res_m.json())
+        self.assertIn("evidence_sources", res_m.json())
 
-        res_s = client.post("/skill-gap", json={"career": "Data Scientist"})
+        res_s = client.post("/skill-gap", json={"career_title": "Data Scientist"})
         self.assertEqual(res_s.status_code, 200)
-        self.assertEqual(res_s.json()["status"], "placeholder_ready_for_phase_3")
+        self.assertIn("overall_readiness", res_s.json())
 
-        res_r = client.post("/roadmap", json={"career": "Cloud Architect"})
+        res_r = client.post("/roadmap", json={"career_title": "Cloud Engineer"})
         self.assertEqual(res_r.status_code, 200)
-        self.assertEqual(res_r.json()["status"], "placeholder_ready_for_phase_4")
+        self.assertIn("stages", res_r.json())
 
-        res_f = client.post("/feasibility", json={"career": "Research Scientist"})
+        res_f = client.post("/feasibility", json={"career_title": "Research Scientist"})
         self.assertEqual(res_f.status_code, 200)
-        self.assertEqual(res_f.json()["status"], "placeholder_ready_for_phase_5")
+        self.assertIn("feasibility_classification", res_f.json())
 
 
 if __name__ == "__main__":

@@ -86,6 +86,19 @@ def get_current_student_id(authorization: Optional[str] = Header(None), db: Sess
     return f"ACGS-STU-{sub}"
 
 
+def get_optional_student_id(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)) -> str:
+    """Extract authenticated student_id or return default demo student if unauthenticated."""
+    if authorization and "Bearer " in authorization:
+        try:
+            return get_current_student_id(authorization, db)
+        except Exception:
+            pass
+    first_profile = db.query(StudentProfile).first()
+    if first_profile:
+        return first_profile.student_id
+    return "ACGS-STU-DEFAULT"
+
+
 # ─── MODULE 2: Student Authentication ───
 
 @router.post("/auth/register", response_model=StudentRegisterResponse, status_code=status.HTTP_201_CREATED)
@@ -167,12 +180,15 @@ def register_student(req: StudentRegisterRequest, db: Session = Depends(get_db))
     return StudentRegisterResponse(
         message="Student registration successful.",
         access_token=access_token,
+        id=user.id,
         student_id=student_id,
         parent_id=parent_id,
         parent_pin=parent_pin,
         user_id=req.user_id,
         name=req.name,
+        full_name=req.name,
         email=req.email,
+        education_level=req.education_level,
     )
 
 
@@ -215,9 +231,11 @@ def login_student(req: StudentLoginRequest, db: Session = Depends(get_db)):
         "access_token": access_token,
         "token_type": "bearer",
         "role": "student",
+        "id": user.id,
         "student_id": student_id,
         "user_id": user.user_id or str(user.id),
         "name": user.full_name,
+        "full_name": user.full_name,
         "email": user.email,
         "parent_id": parent_id,
         "education_level": profile.education_level if profile else user.education_level,
@@ -394,6 +412,16 @@ def get_parent_student_summary(
             "skills_needed": r.skills_needed or [],
         })
 
+    # Get Selected Career if any
+    selected_career_title = None
+    user_id_val = profile.user_id if profile else None
+    if user_id_val:
+        sel_rec = db.query(SelectedCareer).filter(SelectedCareer.user_id == user_id_val).first()
+        if sel_rec:
+            sel_c = db.query(Career).filter(Career.id == sel_rec.career_id).first()
+            if sel_c:
+                selected_career_title = sel_c.title
+
     return ParentStudentSummaryResponse(
         is_read_only=True,
         student_name=student_name,
@@ -413,6 +441,7 @@ def get_parent_student_summary(
         skills_profile=career_profile.skills_profile if career_profile else None,
         interest_profile=career_profile.interest_profile if career_profile else None,
         career_recommendations=rec_list if rec_list else None,
+        selected_career=selected_career_title,
     )
 
 
@@ -433,13 +462,23 @@ def start_deep_assessment(
     if active and active.assessment_state:
         # Resume active session
         state = active.assessment_state
-        next_q = self_assessment_agent.engine.get_next_question(state)
+        hist = state.get("conversation_history", [])
+        from app.services.dynamic_assessment_engine import INITIAL_QUESTION
+        next_q = INITIAL_QUESTION
+        asked = state.get("previously_asked_questions", [])
+        if asked and len(asked) > len(hist):
+            next_q = {
+                "question_id": f"dyn_q_{len(hist) + 1}",
+                "question_text": asked[-1],
+                "options": [],
+                "phase": "specialization",
+            }
         return AssessmentStartResponse(
             assessment_id=active.id,
             student_id=student_id,
             status=active.status,
             current_question=next_q,
-            total_questions=active.total_questions,
+            total_questions=active.total_questions or 8,
             message="Resuming your in-progress self-discovery assessment interview.",
         )
 
@@ -494,14 +533,13 @@ async def send_assessment_message(
 
     state = assessment.assessment_state or self_assessment_agent.engine.get_initial_state(student_id)
 
-    # Reconstruct question_def from bank or req
-    current_q_def = self_assessment_agent.engine.get_next_question(state)
-    if not current_q_def:
-        current_q_def = {
-            "question_id": req.question_id or f"q_{len(state.get('previous_answers', []))}",
-            "question_text": req.question_text or "Answer",
-            "phase": "general",
-        }
+    # Reconstruct question_def
+    current_q_def = {
+        "question_id": req.question_id or f"dyn_q_{len(state.get('conversation_history', []))}",
+        "question_text": req.question_text or "Career Assessment Question",
+        "phase": "specialization",
+        "options": [],
+    }
 
     # Save answer to database table ASSESSMENT_RESPONSES
     response_rec = AssessmentResponse(
@@ -533,14 +571,16 @@ async def send_assessment_message(
     # Update Assessment session in DB
     assessment.assessment_state = copy.deepcopy(new_state)
     flag_modified(assessment, "assessment_state")
-    assessment.current_question = len(new_state.get("previous_answers", []))
-    assessment.total_questions = new_state.get("total_questions_planned", 25)
+    current_step_val = result.get("current_step", len(new_state.get("conversation_history", [])))
+    total_steps_val = result.get("total_steps", 8)
+    assessment.current_question = current_step_val
+    assessment.total_questions = total_steps_val
 
     if is_completed:
         assessment.status = "completed"
         assessment.completed_at = datetime.utcnow()
 
-        # Persist CareerProfile table
+        # Persist CareerProfile & CareerRecommendationRecord
         if profile_data:
             existing_prof = db.query(CareerProfile).filter(CareerProfile.student_id == student_id).first()
             if not existing_prof:
@@ -553,19 +593,133 @@ async def send_assessment_message(
             existing_prof.values_profile = profile_data.get("values_profile")
             existing_prof.confidence_profile = profile_data.get("confidence_profile")
 
-            # Persist Top 5 Career Recommendations
-            db.query(CareerRecommendationRecord).filter(CareerRecommendationRecord.student_id == student_id).delete()
+            # Persist recommendations to CareerRecommendationRecord
+            db.query(CareerRecommendationRecord).filter_by(student_id=student_id).delete()
             for rec in profile_data.get("career_recommendations", []):
-                rec_row = CareerRecommendationRecord(
+                rec_record = CareerRecommendationRecord(
                     student_id=student_id,
-                    career_name=rec.get("career_name"),
-                    match_score=rec.get("match_score", 0.0),
-                    reason=rec.get("reason", ""),
+                    career_name=rec.get("career_name", "Specialized Career"),
+                    match_score=float(rec.get("match_score", 85.0)),
+                    reason=rec.get("reason", "Tailored match from deep discovery interview."),
                     supporting_evidence=rec.get("supporting_evidence", []),
                     concerns=rec.get("concerns", []),
                     skills_needed=rec.get("skills_needed", []),
+                    suggested_projects=rec.get("suggested_projects", []),
+                    immediate_next_steps=rec.get("immediate_next_steps", []),
+                    roadmap_stages=rec.get("roadmap_stages", []),
                 )
-                db.add(rec_row)
+                db.add(rec_record)
+
+            # Sync to AssessmentResult, CareerRecommendation, SkillGap & Roadmap
+            from app.models.assessment import AssessmentResult
+            from app.models.recommendation import CareerRecommendation
+            from app.models.roadmap import SkillGap as SkillGapModel, Roadmap as RoadmapModel, RoadmapItem as RoadmapItemModel
+
+            user_obj = db.query(User).filter(User.user_id == student_id).first()
+            if not user_obj:
+                profile_row = db.query(StudentProfile).filter(StudentProfile.student_id == student_id).first()
+                if profile_row:
+                    user_obj = db.query(User).filter(User.id == profile_row.user_id).first()
+
+            if user_obj:
+                traits = profile_data.get("personality_profile", {})
+                interest_scores = profile_data.get("interest_profile", {})
+                skills_data = profile_data.get("skills_profile", {})
+                confirmed_skills = skills_data.get("confirmed_skills", [])
+                missing_skills = skills_data.get("missing_skills", [])
+
+                skill_scores_map: Dict[str, float] = {}
+                for sk in confirmed_skills:
+                    skill_scores_map[sk.lower()] = 85.0
+                for sk in skills_data.get("self_reported_skills", []):
+                    if sk.lower() not in skill_scores_map:
+                        skill_scores_map[sk.lower()] = 65.0
+                for sk in missing_skills:
+                    if sk.lower() not in skill_scores_map:
+                        skill_scores_map[sk.lower()] = 30.0
+
+                ar = db.query(AssessmentResult).filter_by(user_id=user_obj.id).first()
+                if not ar:
+                    ar = AssessmentResult(user_id=user_obj.id)
+                    db.add(ar)
+                    db.flush()
+
+                ar.interest_scores = interest_scores
+                ar.personality_scores = {k.lower(): v for k, v in traits.items() if isinstance(v, (int, float))}
+                ar.skill_scores = skill_scores_map or {"analytical reasoning": 80.0, "problem solving": 75.0}
+                ar.interest_area = list(interest_scores.keys())[0] if interest_scores else "Specialized Engineering"
+                ar.strong_skills = confirmed_skills or ["Problem Solving", "Analytical Thinking"]
+                ar.work_preference = "Collaborative / Innovation"
+                ar.career_preferences = [r.get("career_name") for r in profile_data.get("career_recommendations", [])[:3]]
+
+                # Seed/update CareerRecommendation records
+                db.query(CareerRecommendation).filter_by(user_id=user_obj.id).delete()
+                top_match_career_id = 1
+                for rank_idx, rec in enumerate(profile_data.get("career_recommendations", []), 1):
+                    c_title = rec.get("career_name", "")
+                    base_title = rec.get("base_career", "")
+                    c_match = (
+                        db.query(Career).filter(Career.title == c_title).first() or
+                        db.query(Career).filter(Career.title == base_title).first() or
+                        db.query(Career).first()
+                    )
+                    if c_match:
+                        if rank_idx == 1:
+                            top_match_career_id = c_match.id
+                        c_rec = CareerRecommendation(
+                            user_id=user_obj.id,
+                            career_id=c_match.id,
+                            match_score=float(rec.get("match_score", 75.0)),
+                            interest_match=min(98.0, float(rec.get("match_score", 75.0)) + 2.0),
+                            skill_match=max(50.0, float(rec.get("match_score", 75.0)) - 8.0),
+                            education_match=90.0,
+                            goal_match=85.0,
+                            work_pref_match=80.0,
+                            reasons=[rec.get("reason", f"High alignment based on your interview answers in {c_title}")],
+                            rank=rank_idx,
+                        )
+                        db.add(c_rec)
+
+                # Seed personalized SkillGap and Roadmap for top match
+                top_rec = profile_data.get("career_recommendations", [])[0] if profile_data.get("career_recommendations") else None
+                if top_rec:
+                    db.query(SkillGapModel).filter_by(user_id=user_obj.id).delete()
+                    sg = SkillGapModel(
+                        user_id=user_obj.id,
+                        career_id=top_match_career_id,
+                        strong_skills=confirmed_skills or ["Core Foundations"],
+                        skills_to_improve=skills_data.get("self_reported_skills", []),
+                        missing_skills=missing_skills or top_rec.get("skills_needed", []),
+                        overall_readiness=float(top_rec.get("match_score", 75.0)),
+                    )
+                    db.add(sg)
+
+                    roadmap_stages = top_rec.get("roadmap_stages", [])
+                    if roadmap_stages:
+                        db.query(RoadmapModel).filter_by(user_id=user_obj.id).delete()
+                        new_roadmap = RoadmapModel(
+                            user_id=user_obj.id,
+                            career_id=top_match_career_id,
+                            total_stages=len(roadmap_stages),
+                            completed_stages=0,
+                        )
+                        db.add(new_roadmap)
+                        db.flush()
+
+                        for s_idx, st in enumerate(roadmap_stages, 1):
+                            item = RoadmapItemModel(
+                                roadmap_id=new_roadmap.id,
+                                stage_number=st.get("stage_number", s_idx),
+                                stage_title=st.get("stage_title", f"Stage {s_idx}"),
+                                description=st.get("description", ""),
+                                skills=st.get("skills", []),
+                                topics=st.get("topics", []),
+                                projects=st.get("projects", []),
+                                resources=st.get("resources", []),
+                                estimated_duration=st.get("estimated_duration", "4-6 weeks"),
+                                is_completed=False,
+                            )
+                            db.add(item)
 
     db.commit()
     db.refresh(assessment)
@@ -576,8 +730,8 @@ async def send_assessment_message(
         is_completed=is_completed,
         conversational_prefix=result.get("conversational_prefix", ""),
         next_question=next_q,
-        current_step=len(new_state.get("previous_answers", [])),
-        total_steps=new_state.get("total_questions_planned", 25),
+        current_step=current_step_val,
+        total_steps=total_steps_val,
         profile=profile_data,
     )
 
@@ -684,63 +838,250 @@ def get_student_career_profile(
     )
 
 
-# ─── MODULE 10: Future Agent API Placeholders ───
+# ─── MODULE 10: Multi-Agent Pipeline Endpoints & Intelligence ───
 
-@router.post("/market-analysis", tags=["Future Agents"])
-def placeholder_market_analysis(data: Dict[str, Any] = {}):
-    """Placeholder interface for Market Intelligence Agent (Phase 2)."""
+from app.models.career import Career, Exam, Scholarship, CareerMyth, MarketInfo
+from app.models.roadmap import SkillGap as SkillGapModel, Roadmap as RoadmapModel, RoadmapItem as RoadmapItemModel
+from app.models.recommendation import SelectedCareer
+
+@router.post("/market-analysis", tags=["Five-Agent Intelligence Pipeline"])
+async def run_market_intelligence(
+    data: Dict[str, Any] = {},
+    db: Session = Depends(get_db),
+):
+    """
+    Agent 2: Market Intelligence Agent Endpoint.
+    Researches labor market demand, salary ranges, and regional pathways (Kerala, India, Global).
+    """
+    career_title = data.get("career_title") or data.get("career") or "Machine Learning Engineer"
+    location = data.get("location") or "Kerala, India"
+    
+    report = await market_agent.research_career_market(career_title, user_location_preference=location)
+    return report
+
+
+@router.post("/skill-gap", tags=["Five-Agent Intelligence Pipeline"])
+def run_skill_gap_analysis(
+    data: Dict[str, Any] = {},
+    student_id: str = Depends(get_optional_student_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Agent 3: Skill Gap Analyst Agent Endpoint.
+    Compares the student's assessed profile against verified job requirements.
+    """
+    career_title = data.get("career_title")
+    career_id = data.get("career_id")
+    
+    if career_id:
+        career = db.query(Career).filter(Career.id == int(career_id)).first()
+    elif career_title:
+        career = db.query(Career).filter(Career.title == str(career_title)).first()
+    else:
+        # Default to selected career or top recommended career
+        prof = db.query(CareerProfile).filter(CareerProfile.student_id == student_id).first()
+        career = db.query(Career).first()
+
+    if not career:
+        raise HTTPException(status_code=404, detail="Career target not found.")
+
+    # Load student skills from career profile or user
+    prof = db.query(CareerProfile).filter(CareerProfile.student_id == student_id).first()
+    student_skills = {}
+    if prof and prof.personality_profile:
+        # Map assessed traits into skills scores
+        for k, v in (prof.personality_profile or {}).items():
+            if isinstance(v, (int, float)):
+                student_skills[k.lower()] = float(v)
+
+    gap_report = skill_gap_agent.analyze(student_skills, career)
+    return gap_report
+
+
+@router.post("/roadmap", tags=["Five-Agent Intelligence Pipeline"])
+def run_roadmap_generation(
+    data: Dict[str, Any] = {},
+    student_id: str = Depends(get_optional_student_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Agent 4: Career Roadmap Generator Agent Endpoint.
+    Produces a 12–24 month actionable milestone plan tailored to user's education category.
+    """
+    career_id = data.get("career_id")
+    career_title = data.get("career_title")
+
+    if career_id:
+        career = db.query(Career).filter(Career.id == int(career_id)).first()
+    elif career_title:
+        career = db.query(Career).filter(Career.title == str(career_title)).first()
+    else:
+        career = db.query(Career).first()
+
+    if not career:
+        raise HTTPException(status_code=404, detail="Career not found.")
+
+    prof = db.query(CareerProfile).filter(CareerProfile.student_id == student_id).first()
+    student_skills = {}
+    if prof and prof.personality_profile:
+        for k, v in prof.personality_profile.items():
+            if isinstance(v, (int, float)):
+                student_skills[k.lower()] = float(v)
+
+    gap = skill_gap_agent.analyze(student_skills, career)
+    
+    profile_dict = {
+        "education_level": data.get("education_level", "College Student")
+    }
+    stages = roadmap_agent.generate(career, gap, profile_dict)
+
     return {
-        "status": "placeholder_ready_for_phase_2",
-        "agent": "MarketIntelligenceAgent",
-        "message": "Market Intelligence with live Tavily search will be enabled in Phase 2.",
-        "input_echo": data,
+        "career_title": career.title,
+        "total_stages": len(stages),
+        "stages": stages,
+        "roadmap_duration": "12–24 Months",
     }
 
 
-@router.post("/skill-gap", tags=["Future Agents"])
-def placeholder_skill_gap(data: Dict[str, Any] = {}):
-    """Placeholder interface for Skill Gap Analyst Agent (Phase 3)."""
-    return {
-        "status": "placeholder_ready_for_phase_3",
-        "agent": "SkillGapAgent",
-        "message": "Skill Gap Analyst Agent curriculum mapping will be expanded in Phase 3.",
-        "input_echo": data,
+@router.post("/feasibility", tags=["Five-Agent Intelligence Pipeline"])
+def run_feasibility_evaluation(
+    data: Dict[str, Any] = {},
+    student_id: str = Depends(get_optional_student_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Agent 5: Feasibility Evaluator Agent Endpoint.
+    Evaluates achievability, time to entry, financial budget, and barrier mitigations.
+    """
+    career_id = data.get("career_id")
+    career_title = data.get("career_title")
+
+    if career_id:
+        career = db.query(Career).filter(Career.id == int(career_id)).first()
+    elif career_title:
+        career = db.query(Career).filter(Career.title == str(career_title)).first()
+    else:
+        career = db.query(Career).first()
+
+    if not career:
+        raise HTTPException(status_code=404, detail="Career not found.")
+
+    prof = db.query(CareerProfile).filter(CareerProfile.student_id == student_id).first()
+    student_skills = {}
+    if prof and prof.personality_profile:
+        for k, v in prof.personality_profile.items():
+            if isinstance(v, (int, float)):
+                student_skills[k.lower()] = float(v)
+
+    gap = skill_gap_agent.analyze(student_skills, career)
+    profile_dict = {
+        "education_level": data.get("education_level", "College Student"),
+        "student_skills": student_skills,
     }
 
-
-@router.post("/roadmap", tags=["Future Agents"])
-def placeholder_roadmap(data: Dict[str, Any] = {}):
-    """Placeholder interface for Career Roadmap Generator Agent (Phase 4)."""
-    return {
-        "status": "placeholder_ready_for_phase_4",
-        "agent": "RoadmapAgent",
-        "message": "12-24 month dynamic roadmap generation will be fully expanded in Phase 4.",
-        "input_echo": data,
-    }
+    eval_result = feasibility_agent.evaluate(profile_dict, career, gap)
+    return eval_result
 
 
-@router.post("/feasibility", tags=["Future Agents"])
-def placeholder_feasibility(data: Dict[str, Any] = {}):
-    """Placeholder interface for Feasibility Evaluator Agent (Phase 5)."""
-    return {
-        "status": "placeholder_ready_for_phase_5",
-        "agent": "FeasibilityAgent",
-        "message": "Feasibility evaluation and risk modeling will be fully expanded in Phase 5.",
-        "input_echo": data,
-    }
+# ─── MODULE 11: Career Ecosystem Endpoints (Myths, Scholarships, Exams) ───
+
+@router.get("/myths", tags=["Career Ecosystem"])
+def get_career_myths(category: Optional[str] = None, db: Session = Depends(get_db)):
+    """Retrieve fact-checked career myths and evidence-based realities."""
+    query = db.query(CareerMyth)
+    if category and category != "all":
+        query = query.filter(CareerMyth.category == category)
+    myths = query.all()
+    return [
+        {
+            "id": m.id,
+            "myth": m.myth,
+            "reality": m.reality,
+            "category": m.category or "General",
+            "career_id": m.career_id,
+        }
+        for m in myths
+    ]
+
+
+@router.get("/scholarships", tags=["Career Ecosystem"])
+def get_scholarships(education_level: Optional[str] = None, db: Session = Depends(get_db)):
+    """Retrieve verified government and institutional scholarships."""
+    query = db.query(Scholarship)
+    if education_level:
+        query = query.filter(Scholarship.education_level.ilike(f"%{education_level}%"))
+    results = query.all()
+    return [
+        {
+            "id": s.id,
+            "name": s.name,
+            "provider": s.provider,
+            "eligibility": s.eligibility,
+            "education_level": s.education_level,
+            "amount": s.amount,
+            "application_period": s.application_period,
+            "official_website": s.official_website,
+            "description": s.description,
+        }
+        for s in results
+    ]
+
+
+@router.get("/exams", tags=["Career Ecosystem"])
+def get_exams(career_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Retrieve entrance examinations and professional certifications."""
+    query = db.query(Exam)
+    if career_id:
+        query = query.filter(Exam.career_id == career_id)
+    results = query.all()
+    return [
+        {
+            "id": e.id,
+            "name": e.name,
+            "category": e.category,
+            "conducting_org": e.conducting_org,
+            "eligibility": e.eligibility,
+            "frequency": e.frequency,
+            "official_website": e.official_website,
+            "description": e.description,
+            "career_id": e.career_id,
+        }
+        for e in results
+    ]
+
+
+# ─── MODULE 12: Reproducible Evaluation Framework ───
+
+@router.get("/evaluation/run", tags=["System Evaluation"])
+def run_system_evaluation(db: Session = Depends(get_db)):
+    """
+    Run reproducible evaluation benchmark across 100 synthetic student profiles.
+    Returns Career Match Relevance, Skill Gap Accuracy, Roadmap Actionability,
+    and Operational latency metrics.
+    """
+    from app.services.evaluation_service import evaluator
+    careers = db.query(Career).all()
+    results = evaluator.run_benchmark(careers)
+    return results
 
 
 # ─── Dual-Mode Assistant Chatbot (Student & Parent) ───
 
-from pydantic import BaseModel as PydanticBase
+from pydantic import BaseModel as PydanticBase, Field
+
+
+class ChatHistoryTurn(PydanticBase):
+    role: str = Field(default="user", description="'user' or 'assistant'")
+    text: str = Field(default="", max_length=4000)
 
 
 class AssistantChatRequest(PydanticBase):
-    message: str
-    mode: str = "student"  # "student" or "parent"
-    student_name: Optional[str] = None
-    education_level: Optional[str] = None
-    current_page: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=2500, description="User query")
+    mode: str = Field(default="student", pattern="^(student|parent)$")
+    student_name: Optional[str] = Field(default=None, max_length=150)
+    education_level: Optional[str] = Field(default=None, max_length=150)
+    current_page: Optional[str] = Field(default=None, max_length=100)
+    history: Optional[List[ChatHistoryTurn]] = Field(default=None, description="Recent conversation turns for follow-up context")
 
 
 @router.post("/assistant/chat", tags=["AI Assistant"])
@@ -748,121 +1089,198 @@ async def assistant_chat_endpoint(req: AssistantChatRequest):
     """
     Intelligent Assistant Chatbot for both Students and Parents.
     Provides empathetic, domain-rich career guidance, platform navigation,
-    and parental advisory. Supports Kerala, Indian, and Global context.
+    and parental advisory. Maintains conversational context for follow-up queries.
     """
     user_msg = req.message.strip()
+    if not user_msg:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
     mode = req.mode.lower()
     lowered = user_msg.lower()
 
-    # 1. Try Gemini LLM if configured
+    # Convert Pydantic history turns to list of dicts for LLM
+    formatted_history = []
+    if req.history:
+        for turn in req.history:
+            formatted_history.append({"role": turn.role, "text": turn.text})
+
+    # 1. Try Gemini LLM via chat_with_history (preserves context and guidelines)
     from app.services.llm_service import llm_service
     if llm_service.is_configured():
-        if mode == "parent":
-            sys_inst = (
-                "You are the ACGS Parent Advisory Assistant for the AI-Powered Agentic Career Guidance System. "
-                "Your role is to support parents with empathy and clear, non-technical explanations. "
-                "Help them understand modern careers (AI, Data Science, Software, Cloud, Core Engineering), "
-                "advise them on supporting their child without undue pressure, explain the job market in Kerala "
-                "(Technopark Thiruvananthapuram, Infopark Kochi) and India, and remind them that the guidance is student-first. "
-                "Keep responses warm, concise, and structured (under 120 words)."
-            )
-        else:
-            sys_inst = (
-                "You are the ACGS Student Guidance Assistant for the AI-Powered Agentic Career Guidance System. "
-                "Your role is to empower students (school, college, postgrad) with career insights, explain the self-assessment interview, "
-                "recommend skills (Python, SQL, DSA, AI), suggest paths after B.Tech/School, discuss higher studies (GATE/MS/MBA), "
-                "and explain job ecosystems in Kerala (Technopark, Infopark) and globally. "
-                "Keep responses encouraging, practical, and clear (under 120 words)."
-            )
-
-        prompt = f"User asks: {user_msg}\nStudent details: Name: {req.student_name or 'Student'}, Level: {req.education_level or 'College'}"
-        llm_reply = await llm_service.generate_response(prompt, sys_inst)
+        student_ctx = {
+            "student_name": req.student_name,
+            "education_level": req.education_level,
+            "current_page": req.current_page
+        }
+        llm_reply = await llm_service.chat_with_history(
+            current_message=user_msg,
+            conversation_history=formatted_history,
+            mode=mode,
+            student_context=student_ctx
+        )
         if llm_reply:
-            return {"reply": llm_reply.strip(), "mode": mode, "source": "gemini"}
+            return {
+                "reply": llm_reply.strip(),
+                "mode": mode,
+                "source": "gemini",
+                "has_context": bool(req.history and len(req.history) > 0)
+            }
 
-    # 2. Intelligent Contextual Fallback Engine
+    # 2. Intelligent Contextual & Grounded Knowledge Engine
+    # If the user is asking about specific careers, roles, skills, or comparisons,
+    # retrieve grounded context from the Career Knowledge Base / RAG pipeline.
+    from app.rag.vector_store import vector_store, RAGPipeline
+    from app.services.career_service import CAREERS_DATA
+
+    # Ensure vector store is populated
+    if not vector_store.documents:
+        vector_store.build_index(CAREERS_DATA)
+
+    # Perform semantic search on the query
+    retrieved = RAGPipeline.retrieve(user_msg, top_k=2)
+    top_career_match = retrieved[0]["career"] if (retrieved and retrieved[0].get("score", 0) > 0.08) else None
+
     reply = ""
     if mode == "parent":
-        if any(w in lowered for w in ["read only", "edit", "change", "alter"]):
+        if top_career_match and any(w in lowered for w in ["what", "how", "scope", "salary", "future", "career", "about"]):
+            c = top_career_match
             reply = (
-                "🔒 **Parent Access is Read-Only by Design**:\n"
-                "To ensure authentic self-discovery, students answer the discovery interview independently. "
-                "As a parent, you can view your child's personality profile, skills, and top career matches, "
-                "which provides a transparent foundation for constructive, supportive family discussions."
+                f"💼 **Career Overview for Parents: {c['title']}**\n\n"
+                f"- **What they do**: {c['description']}\n"
+                f"- **Education Path**: Typically requires {c['required_degree']}.\n"
+                f"- **Industry Demand**: Growth is rated as **{c.get('career_growth', 'High')}**.\n"
+                f"- **Salary Scale in India**: Entry-level starts around ₹{c.get('salary_beginner', 5.0)} LPA and scales to ₹{c.get('salary_senior', 30.0)}+ LPA with experience.\n"
+                f"- **Hiring Companies**: Active demand in IT hubs like Technopark (Trivandrum), Infopark (Kochi), and nationwide.\n\n"
+                "💡 *Advisory tip*: Encourage your child to focus on building strong foundational skills and hands-on projects rather than immediate exam pressure."
+            )
+        elif any(w in lowered for w in ["read only", "edit", "change", "alter"]):
+            reply = (
+                "🔒 **Parent Access is Read-Only by Design**:\n\n"
+                "To ensure authentic self-discovery, students complete the assessment independently. "
+                "As a parent, you can view your child's personality profile, core competencies, and career matches, "
+                "giving you a shared foundation for supportive, non-pressuring family discussions."
             )
         elif any(w in lowered for w in ["ai", "data science", "machine learning"]):
             reply = (
-                "🤖 **Understanding AI & Data Careers**:\n"
-                "Artificial Intelligence and Data Science are among the fastest-growing fields globally and in India. "
-                "Professionals in these roles analyze patterns, automate complex decisions, and build smart software. "
-                "In Kerala, major firms in Technopark (Thiruvananthapuram) and Infopark (Kochi) actively hire for these roles."
+                "🤖 **Understanding AI & Data Careers**:\n\n"
+                "Artificial Intelligence and Data Science are among the highest-growth domains globally and in India:\n"
+                "- **Key Roles**: AI Engineer, Data Scientist, Machine Learning Specialist.\n"
+                "- **Work Involved**: Analyzing business data, building predictive models, and automating smart processes.\n"
+                "- **Regional Hubs**: Technopark (Thiruvananthapuram) and Infopark (Kochi) actively recruit for these roles, alongside Bangalore and Hyderabad."
             )
         elif any(w in lowered for w in ["job", "salary", "market", "demand", "kerala", "placement"]):
             reply = (
-                "💼 **Job Market & Career Security**:\n"
-                "Technology and data careers offer strong long-term growth and competitive compensation. "
-                "Kerala's IT hubs (Technopark & Infopark) host over 800+ tech companies, while hubs like Bangalore and Hyderabad "
-                "offer vast product opportunities. The best career security comes from strong foundational problem-solving skills."
-            )
-        elif any(w in lowered for w in ["score", "dimension", "personality", "meaning"]):
-            reply = (
-                "📊 **Understanding Personality Scores**:\n"
-                "The 10-dimension personality profile reflects working styles and cognitive preferences (e.g., Analytical, Creative, Collaboration), "
-                "NOT psychological diagnoses. A higher analytical score indicates affinity for logic and data, while high collaboration suggests teamwork strength."
+                "💼 **Job Market & Career Stability**:\n\n"
+                "- **Tech Hubs in Kerala**: Over 800+ IT companies operate in Technopark, Infopark, and Cyberpark.\n"
+                "- **Career Outlook**: Software, Cloud, and Data domains maintain steady entry-level and lateral hiring demand.\n"
+                "- **Best Advice**: Long-term career security is built on problem-solving foundations and curiosity rather than a single specific degree title."
             )
         elif any(w in lowered for w in ["support", "help", "guide", "pressure"]):
             reply = (
-                "🌱 **How Parents Can Best Support**:\n"
-                "1. **Listen first**: Ask your child what excited them about their top career matches.\n"
-                "2. **Encourage exploration**: Support building practical projects and internships.\n"
-                "3. **Focus on effort**: Career readiness takes continuous learning rather than immediate perfection."
+                "🌱 **How to Support Your Child's Journey**:\n\n"
+                "1. **Listen Actively**: Ask what aspects of their matched careers excite them most.\n"
+                "2. **Encourage Hands-on Projects**: Support learning through real-world experiments, hackathons, and internships.\n"
+                "3. **Focus on Growth**: Remind them that career paths evolve; adaptability is more valuable than rigid choices."
             )
         else:
             reply = (
-                "👋 **Parent Guidance Assistant**:\n"
-                "I am here to help you understand your child's career options, the job market (in Kerala and globally), "
-                "and how to interpret the assessment results. Feel free to ask about any specific career field, salary trends, or how to support your child!"
+                "👋 **Parent Guidance Advisory**:\n\n"
+                "I am here to help you understand your child's career pathways. You can ask about:\n"
+                "- Specific career tracks (e.g., Software Engineer, Cloud Architect, AI Specialist)\n"
+                "- Higher education options (GATE, MS abroad, MBA)\n"
+                "- Job market demand and salary outlooks in Kerala and pan-India\n"
+                "- How to understand assessment results and support career decisions without pressure."
             )
     else:  # Student mode
-        if any(w in lowered for w in ["assessment", "interview", "start", "how"]):
+        # 1. Grounded Match from Knowledge Base
+        if top_career_match and any(w in lowered for w in ["cloud", "ml", "machine learning", "data", "software", "devops", "cyber", "ui", "ux", "product", "analyst", "skills", "become", "roadmap", "salary", "how to"]):
+            c = top_career_match
+            req_skills = ", ".join(c.get("required_skills", []))
+            opt_skills = ", ".join(c.get("optional_skills", []))
+            roles = ", ".join(c.get("job_roles", []))
+
             reply = (
-                "🧭 **How the Discovery Interview Works**:\n"
-                "Our autonomous Self-Assessment Agent conducts a deep 25–40 interaction interview. "
-                "It starts by understanding whether you are in school, college, or working, then asks follow-ups about your favorite subjects, "
-                "project interests, problem-solving style, and career goals to synthesize your personalized profile."
+                f"🎯 **Grounded Career Guide: {c['title']}**\n\n"
+                f"**Overview**:\n{c['description']}\n\n"
+                f"**Core Skills Required**:\n- **Must-Have**: {req_skills}\n- **Recommended / Preferred**: {opt_skills}\n\n"
+                f"**Step-by-Step Learning Path**:\n"
+                f"1. **Month 1-2 (Foundations)**: Master the primary language (e.g. Python / Linux / SQL) and core tools.\n"
+                f"2. **Month 3-4 (Specialization)**: Build practical projects using {', '.join(c.get('required_skills', [])[:3])}.\n"
+                f"3. **Month 5-6 (Portfolio & Placements)**: Deploy 2 real-world projects to GitHub and practice technical interviews.\n\n"
+                f"**Industry & Compensation Outlook**:\n"
+                f"- **Entry-Level**: ₹{c.get('salary_beginner', 5.0)} LPA\n"
+                f"- **Experienced**: Up to ₹{c.get('salary_senior', 35.0)}+ LPA\n"
+                f"- **Common Roles**: {roles}\n\n"
+                f"Would you like recommended certifications or interview questions for {c['title']}?"
             )
-        elif any(w in lowered for w in ["kerala", "technopark", "infopark", "local"]):
+        elif any(w in lowered for w in ["compare", "vs", "versus"]):
             reply = (
-                "🌴 **Tech Opportunities in Kerala**:\n"
-                "Kerala has an expanding tech ecosystem with Technopark in Thiruvananthapuram, Infopark in Kochi, and Cyberpark in Kozhikode. "
-                "Leading MNCs (UST, TCS, Infosys, IBS) as well as product startups offer excellent entry points in Full-Stack, Cloud, and AI."
+                "⚖️ **Career Comparison Overview**:\n\n"
+                "| Career Track | Core Focus | Key Skills Needed | Growth Outlook |\n"
+                "|---|---|---|---|\n"
+                "| **AI / Machine Learning** | Predictive models & algorithms | Python, Math/Stats, PyTorch | Rapidly Expanding |\n"
+                "| **Full-Stack Development** | Web apps & user interfaces | JavaScript, React, Node/Python | High Steady Demand |\n"
+                "| **Cloud & DevOps** | Infrastructure, CI/CD, scalability | AWS/GCP, Docker, Kubernetes, Linux | High Demand |\n"
+                "| **Data Analytics** | Business insights & dashboards | SQL, PowerBI, Excel, Python | Strong Across All Sectors |\n\n"
+                "Which specific careers would you like a detailed breakdown of?"
             )
-        elif any(w in lowered for w in ["skill", "python", "learn", "prepare"]):
+        elif any(w in lowered for w in ["roadmap", "steps", "plan", "how to start", "timeline"]):
             reply = (
-                "⚡ **Top Skills to Build Right Now**:\n"
-                "1. **Programming**: Master Python or JavaScript with data structures fundamentals.\n"
-                "2. **Data & SQL**: Practice relational querying and basic data analysis.\n"
-                "3. **Projects**: Build and publish 2-3 end-to-end projects on GitHub to prove your capabilities."
+                "🗺️ **6-Month Career Acceleration Roadmap**:\n\n"
+                "1. **Foundations (Month 1-2)**: Master one core language (Python or JavaScript) and foundational Data Structures.\n"
+                "2. **Domain Specialization (Month 3-4)**: Learn primary frameworks, relational databases (SQL), and Git version control.\n"
+                "3. **Practical Portfolio (Month 5)**: Build and deploy 2 complete end-to-end projects demonstrating problem-solving.\n"
+                "4. **Career Readiness (Month 6)**: Resume optimization, technical mock interviews, and applying for internships."
+            )
+        elif any(w in lowered for w in ["skill", "skills", "learn", "what do i need", "gap"]):
+            reply = (
+                "⚡ **Top In-Demand Skills to Build**:\n\n"
+                "- **Programming & Logic**: Python or TypeScript with clean coding and daily practice (LeetCode / HackerRank).\n"
+                "- **Data & Storage**: Relational SQL querying, database schema design, and working with REST APIs.\n"
+                "- **Cloud & Version Control**: Git, Docker containerization, and basic deployment on AWS/GCP.\n"
+                "- **Professional Skills**: Clear technical articulation, teamwork, and structured problem breakdown."
+            )
+        elif any(w in lowered for w in ["b.tech", "ai student", "machine learning", "data science"]):
+            reply = (
+                "🎓 **Guidance for B.Tech AI & Data Science Students**:\n\n"
+                "You are in a high-opportunity specialization! To stand out:\n"
+                "1. Solidify **Mathematics & Linear Algebra** — they make ML and deep learning intuitive.\n"
+                "2. Master core tools: **NumPy, Pandas, Scikit-Learn, PyTorch, SQL**.\n"
+                "3. Publish working models on **HuggingFace** and clean code on **GitHub**.\n\n"
+                "What specific field within AI excites you most (e.g. Computer Vision, NLP, Generative AI, or Data Engineering)?"
             )
         elif any(w in lowered for w in ["gate", "higher study", "ms", "cat", "mba"]):
             reply = (
-                "🎓 **Higher Studies vs Placements**:\n"
-                "- **M.Tech via GATE**: Ideal for deep specialization and research in premier institutes (IITs/IISc/NITs).\n"
-                "- **MS Abroad**: Great for global exposure and research in AI or Systems.\n"
-                "- **MBA via CAT**: Best if you lean toward tech product management or consulting.\n"
-                "- **Campus Placements**: Excellent for immediate practical industry experience."
+                "🎓 **Higher Studies vs Campus Placements**:\n\n"
+                "- **GATE (M.Tech/MS)**: Top choice for deep research, R&D roles, and admission into IITs/IISc.\n"
+                "- **MS Abroad (US/Europe)**: Ideal for international exposure, specialized AI labs, and global hiring.\n"
+                "- **CAT (MBA)**: Strong path if you want to transition into Product Management or Technology Consulting.\n"
+                "- **Campus Placements**: Excellent for immediate practical engineering experience and financial independence."
             )
-        elif any(w in lowered for w in ["confused", "which career", "recommend"]):
+        elif any(w in lowered for w in ["kerala", "technopark", "infopark", "trivandrum", "kochi"]):
             reply = (
-                "💡 **Finding Your Direction**:\n"
-                "Career confusion is completely natural! The best step is to complete the 25-question Self-Assessment interview. "
-                "It evaluates your analytical, creative, and interpersonal strengths to generate your Top 5 matched career pathways."
+                "🌴 **Tech Opportunities in Kerala**:\n\n"
+                "- **Technopark (Trivandrum)**: Over 70,000 tech professionals across MNCs like UST, Infosys, TCS, Tata Elxsi.\n"
+                "- **Infopark (Kochi)**: Rapidly growing hub with strong product development, fintech, and digital transformation firms.\n"
+                "- **Cyberpark (Calicut)**: Emerging tech hub with active startup and software engineering presence."
+            )
+        elif any(w in lowered for w in ["interview", "resume", "prep", "placement"]):
+            reply = (
+                "🎯 **Interview Preparation Strategy**:\n\n"
+                "1. **Resume**: Keep it to 1 clean page. Prioritize measurable project outcomes over course lists.\n"
+                "2. **Coding Round**: Practice 2-3 algorithmic problems daily focusing on arrays, strings, and trees.\n"
+                "3. **Core CS Fundamentals**: Review DBMS (SQL queries, indexing), Operating Systems, and OOP concepts.\n"
+                "4. **Behavioral**: Prepare 2-3 stories using the STAR method (Situation, Task, Action, Result)."
             )
         else:
             reply = (
-                "🚀 **Student Guidance Assistant**:\n"
-                "I'm your AI career companion! You can ask me about different tech careers, skills to learn, how the assessment works, "
-                "higher studies vs campus jobs, or opportunities across Kerala and India."
+                "🚀 **AI Career Guidance Assistant**:\n\n"
+                "I am your AI career companion! You can ask me:\n"
+                "- **Specific careers**: 'How to become a Cloud Engineer?' or 'What does a Data Scientist do?'\n"
+                "- **Step-by-step roadmaps**: 'Give me a roadmap for Machine Learning'\n"
+                "- **Comparisons**: 'Compare AI Engineer vs Software Engineer'\n"
+                "- **Higher studies**: 'GATE vs Campus Placements'\n"
+                "- **Interview tips**: 'How to prepare for campus placements?'"
             )
 
     return {"reply": reply, "mode": mode, "source": "knowledge_engine"}

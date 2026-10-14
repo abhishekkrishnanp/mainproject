@@ -314,7 +314,7 @@ export default function AssessmentChatPage({ currentUser, token, onAssessmentCom
                 )}
 
                 {rec.skills_needed && rec.skills_needed.length > 0 && (
-                  <div>
+                  <div style={{ marginBottom: "0.85rem" }}>
                     <div style={{ fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.4rem" }}>
                       Key Skills to Develop:
                     </div>
@@ -325,6 +325,28 @@ export default function AssessmentChatPage({ currentUser, token, onAssessmentCom
                         </span>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {rec.suggested_projects && rec.suggested_projects.length > 0 && (
+                  <div style={{ marginBottom: "0.85rem" }}>
+                    <div style={{ fontSize: "0.825rem", fontWeight: 600, color: "#38bdf8", marginBottom: "0.3rem" }}>
+                      Recommended Portfolio Projects:
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: "1.25rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+                      {rec.suggested_projects.map((proj, i) => <li key={i}>{proj}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {rec.immediate_next_steps && rec.immediate_next_steps.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: "0.825rem", fontWeight: 600, color: "#34d399", marginBottom: "0.3rem" }}>
+                      Immediate Next Actions:
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: "1.25rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+                      {rec.immediate_next_steps.map((step, i) => <li key={i}>{step}</li>)}
+                    </ul>
                   </div>
                 )}
               </div>

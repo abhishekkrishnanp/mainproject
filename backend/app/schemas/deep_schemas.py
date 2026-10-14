@@ -38,12 +38,15 @@ class StudentRegisterResponse(BaseModel):
     message: str
     access_token: str
     token_type: str = "bearer"
+    id: Optional[int] = None
     student_id: str
     parent_id: str
     parent_pin: str
     user_id: str
     name: str
+    full_name: Optional[str] = None
     email: str
+    education_level: Optional[str] = None
 
 
 class StudentProfileOut(BaseModel):

@@ -399,50 +399,134 @@ export default function StudentDashboardPage({ currentUser, token, onStartAssess
         </div>
       )}
 
-      {/* Future Feature Architecture (Coming Soon cards) */}
-      <div>
+      {/* Interactive Career Ecosystem & Live Agents Section */}
+      <div style={{ marginBottom: "2.5rem" }}>
         <div style={{ marginBottom: "1.25rem" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", color: "var(--primary)", fontWeight: 600, fontSize: "0.85rem", marginBottom: "0.3rem" }}>
+            <Sparkles size={16} /> Autonomous Intelligence Ecosystem
+          </div>
           <h3 style={{ fontSize: "1.45rem", fontWeight: 700, margin: "0 0 0.35rem" }}>
-            Full System Roadmap &amp; Agent Architecture
+            Career Exploration &amp; Real-Time Market Intelligence
           </h3>
           <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", margin: 0 }}>
-            Phase 1 (First 35-40%) implemented the foundation. The following modules will connect into this architecture:
+            Interact with live market analysis, myth busters, verified scholarships, entrance exams, and evaluation benchmarks:
           </p>
         </div>
 
+        {/* Feature Tabs / Modals Trigger */}
         <div style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: "1.25rem"
+          gap: "1.25rem",
+          marginBottom: "1.5rem"
         }}>
-          {futureFeatures.map((feat, idx) => (
-            <div 
-              key={idx}
-              className="glass-card"
-              style={{
-                padding: "1.35rem",
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "space-between",
-                opacity: 0.85
-              }}
-            >
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-                  <h4 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>{feat.title}</h4>
-                  <span className="badge" style={{ background: "rgba(255,255,255,0.08)", color: "var(--text-muted)", fontSize: "0.75rem" }}>
-                    Coming Soon
-                  </span>
+          {/* Card 1: Market Intelligence */}
+          <div className="glass-card" style={{ padding: "1.35rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <TrendingUp size={20} style={{ color: "#38bdf8" }} />
+                  <h4 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Market Intelligence</h4>
                 </div>
-                <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: 1.5, margin: 0 }}>
-                  {feat.desc}
-                </p>
+                <span className="badge badge-success" style={{ fontSize: "0.75rem" }}>Live Agent</span>
               </div>
-              <div style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--primary)", fontWeight: 600 }}>
-                {feat.phase} Target
-              </div>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: 1.5, margin: "0 0 1rem" }}>
+                Kerala IT clusters (Technopark, Infopark), national salary trends, and verified source citations.
+              </p>
             </div>
-          ))}
+            <button
+              onClick={async () => {
+                const target = careerProfile?.career_recommendations?.[0]?.career_name || "Machine Learning Engineer";
+                const res = await api.getMarketAnalysis(target, "Kerala, India", token);
+                alert(`[Agent 2: Market Intelligence]\nCareer: ${res.career_title}\nGeographic: ${res.geographic_focus}\nSources: ${res.provenance_count} verified citations.\n\nSummary:\n${res.market_summary}\n\nKerala Hubs: ${res.kerala_opportunities?.primary_hubs?.join(', ')}\nEntry Band: ${res.kerala_opportunities?.entry_salary_band_kerala}`);
+              }}
+              className="btn btn-outline"
+              style={{ fontSize: "0.825rem", padding: "0.45rem 0.85rem", width: "100%" }}
+            >
+              Analyze Market Evidence <ArrowRight size={14} />
+            </button>
+          </div>
+
+          {/* Card 2: Career Myth Buster */}
+          <div className="glass-card" style={{ padding: "1.35rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <Lightbulb size={20} style={{ color: "#f59e0b" }} />
+                  <h4 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Career Myth Buster</h4>
+                </div>
+                <span className="badge badge-primary" style={{ fontSize: "0.75rem" }}>Verified Facts</span>
+              </div>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: 1.5, margin: "0 0 1rem" }}>
+                Debunk common misconceptions regarding salaries, college pedigree, gender, and AI replacement.
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                const myths = await api.getCareerMyths();
+                const sample = myths.slice(0, 3).map((m, i) => `Myth ${i+1}: "${m.myth}"\nReality: ${m.reality}`).join("\n\n");
+                alert(`[Career Myth Buster - Verified Insights]\n\n${sample}`);
+              }}
+              className="btn btn-outline"
+              style={{ fontSize: "0.825rem", padding: "0.45rem 0.85rem", width: "100%" }}
+            >
+              Explore Myth Buster <ArrowRight size={14} />
+            </button>
+          </div>
+
+          {/* Card 3: Scholarships & Funding */}
+          <div className="glass-card" style={{ padding: "1.35rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <Award size={20} style={{ color: "#10b981" }} />
+                  <h4 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Scholarships Finder</h4>
+                </div>
+                <span className="badge badge-accent" style={{ fontSize: "0.75rem" }}>Govt &amp; Private</span>
+              </div>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: 1.5, margin: "0 0 1rem" }}>
+                Government fellowships (KVPY, Post-Matric) and corporate CSR support for economically constrained students.
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                const ships = await api.getScholarships();
+                const list = ships.slice(0, 3).map((s) => `• ${s.name} (${s.provider})\n  Amount: ${s.amount}\n  Eligibility: ${s.eligibility}`).join("\n\n");
+                alert(`[Verified Scholarships]\n\n${list}`);
+              }}
+              className="btn btn-outline"
+              style={{ fontSize: "0.825rem", padding: "0.45rem 0.85rem", width: "100%" }}
+            >
+              View Verified Scholarships <ArrowRight size={14} />
+            </button>
+          </div>
+
+          {/* Card 4: Evaluation Benchmark */}
+          <div className="glass-card" style={{ padding: "1.35rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <BarChart3 size={20} style={{ color: "#a855f7" }} />
+                  <h4 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>Quality Benchmarks</h4>
+                </div>
+                <span className="badge badge-primary" style={{ fontSize: "0.75rem" }}>100 Synthetic Profiles</span>
+              </div>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: 1.5, margin: "0 0 1rem" }}>
+                Reproducible evaluation metrics: Career Match Hit-Rate, Skill Gap F1, and Roadmap Actionability.
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                const evalData = await api.runEvaluationBenchmark();
+                const m = evalData.metrics;
+                alert(`[Section 11 Reproducible Quality Evaluation]\nProfiles Tested: ${evalData.synthetic_profiles_tested}\n\n• Career Match Top-3 Hit Rate: ${m.career_match_relevance.top_3_hit_rate_pct}%\n• Skill Gap Mean F1 Score: ${m.skill_gap_accuracy.mean_f1_score_pct}%\n• Roadmap Actionability Rubric: ${m.roadmap_actionability.mean_rubric_score_out_of_100}/100\n• Execution Latency (P95): ${m.operational_performance.p95_latency_ms} ms\n• Pipeline Completion Rate: ${m.operational_performance.pipeline_completion_rate_pct}%\n\nNotice: ${evalData.label_validation_notice}`);
+              }}
+              className="btn btn-primary"
+              style={{ fontSize: "0.825rem", padding: "0.45rem 0.85rem", width: "100%" }}
+            >
+              Run Benchmark Evaluation <ArrowRight size={14} />
+            </button>
+          </div>
         </div>
       </div>
     </div>

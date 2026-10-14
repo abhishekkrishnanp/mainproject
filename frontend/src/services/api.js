@@ -221,21 +221,63 @@ export const api = {
     return res.json();
   },
 
-  getSkillGap: async (token, careerId, studentId) => {
+  // Rich AI-personalized career recommendations from the conversational assessment
+  getAIRecommendations: async (token) => {
+    const res = await fetch(`${API_BASE}/career/ai-recommendations`, {
+      headers: getHeaders(token),
+    });
+    if (!res.ok) {
+      if (res.status === 404) return null; // No AI profile yet
+      throw new Error("Failed to fetch AI career recommendations");
+    }
+    return res.json();
+  },
+
+  getSkillGap: async (arg1, arg2, arg3) => {
+    // Flexible signature: (token, careerId, studentId) or (studentId, careerId, token)
+    let token = null;
+    let careerId = null;
+    let studentId = 1;
+
+    if (typeof arg1 === "string" && arg1.length > 30) {
+      token = arg1;
+      careerId = arg2;
+      studentId = arg3 || 1;
+    } else {
+      studentId = arg1 || 1;
+      careerId = arg2;
+      token = arg3;
+    }
+
     const res = await fetch(`${API_BASE}/career/skill-gap`, {
       method: "POST",
       headers: getHeaders(token),
-      body: JSON.stringify({ career_id: careerId, student_id: studentId || 1 }),
+      body: JSON.stringify({ career_id: careerId, student_id: studentId }),
     });
     if (!res.ok) throw new Error("Failed to compute skill gap");
     return res.json();
   },
 
-  getRoadmap: async (token, careerId, studentId) => {
+  getRoadmap: async (arg1, arg2, arg3) => {
+    // Flexible signature: (token, careerId, studentId) or (studentId, careerId, token)
+    let token = null;
+    let careerId = null;
+    let studentId = 1;
+
+    if (typeof arg1 === "string" && arg1.length > 30) {
+      token = arg1;
+      careerId = arg2;
+      studentId = arg3 || 1;
+    } else {
+      studentId = arg1 || 1;
+      careerId = arg2;
+      token = arg3;
+    }
+
     const res = await fetch(`${API_BASE}/career/roadmap`, {
       method: "POST",
       headers: getHeaders(token),
-      body: JSON.stringify({ career_id: careerId, student_id: studentId || 1 }),
+      body: JSON.stringify({ career_id: careerId, student_id: studentId }),
     });
     if (!res.ok) throw new Error("Failed to generate roadmap");
     return res.json();
@@ -262,13 +304,201 @@ export const api = {
         student_name: extraContext.student_name,
         education_level: extraContext.education_level,
         current_page: extraContext.current_page,
+        history: extraContext.history || [],
       }),
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Assistant service unavailable");
     }
     return res.json();
   },
+
+  // ─── Live Five-Agent Services ───
+  getMarketAnalysis: async (careerTitle, location = "Kerala, India", token = null) => {
+    const res = await fetch(`${API_BASE}/market-analysis`, {
+      method: "POST",
+      headers: getHeaders(token),
+      body: JSON.stringify({ career_title: careerTitle, location }),
+    });
+    if (!res.ok) throw new Error("Failed to fetch market analysis");
+    return res.json();
+  },
+
+  getFeasibilityEvaluation: async (careerTitle, careerId = null, educationLevel = "College Student", token = null) => {
+    const res = await fetch(`${API_BASE}/feasibility`, {
+      method: "POST",
+      headers: getHeaders(token),
+      body: JSON.stringify({ career_title: careerTitle, career_id: careerId, education_level: educationLevel }),
+    });
+    if (!res.ok) throw new Error("Failed to evaluate feasibility");
+    return res.json();
+  },
+
+  // ─── Career Ecosystem & Quality Services ───
+  getCareerMyths: async (category = null) => {
+    const url = category ? `${API_BASE}/myths?category=${encodeURIComponent(category)}` : `${API_BASE}/myths`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch career myths");
+    return res.json();
+  },
+
+  getScholarships: async (educationLevel = null) => {
+    const url = educationLevel ? `${API_BASE}/scholarships?education_level=${encodeURIComponent(educationLevel)}` : `${API_BASE}/scholarships`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch scholarships");
+    return res.json();
+  },
+
+  getExams: async (careerId = null) => {
+    const url = careerId ? `${API_BASE}/exams?career_id=${careerId}` : `${API_BASE}/exams`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch exams and certifications");
+    return res.json();
+  },
+
+  runEvaluationBenchmark: async () => {
+    const res = await fetch(`${API_BASE}/evaluation/run`);
+    if (!res.ok) throw new Error("Failed to run evaluation benchmark");
+    return res.json();
+  },
+
+  // ─── Gemini LLM Powered Career Guidance ───
+  gemini: {
+    getStatus: async () => {
+      const res = await fetch(`${API_BASE}/api/v1/gemini/status`);
+      if (!res.ok) throw new Error("Failed to fetch Gemini status");
+      return res.json();
+    },
+
+    getRecommendations: async (data) => {
+      const res = await fetch(`${API_BASE}/api/v1/gemini/recommendations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to generate AI recommendations");
+      }
+      return res.json();
+    },
+
+    getRoadmap: async (data) => {
+      const res = await fetch(`${API_BASE}/api/v1/gemini/roadmap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to generate AI roadmap");
+      }
+      return res.json();
+    },
+
+    getSkillGapAnalysis: async (data) => {
+      const res = await fetch(`${API_BASE}/api/v1/gemini/skill-gap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to analyze skill gap");
+      }
+      return res.json();
+    },
+
+    askQuestion: async (data) => {
+      const res = await fetch(`${API_BASE}/api/v1/gemini/qa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to get AI career answer");
+      }
+      return res.json();
+    },
+
+    clarifyMyths: async (data) => {
+      const res = await fetch(`${API_BASE}/api/v1/gemini/myth-buster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to clarify career myths");
+      }
+      return res.json();
+    },
+
+    /**
+     * Single-turn authenticated Gemini chat.
+     * Stores history server-side; token required.
+     */
+    chat: async (message, mode = "student", token = null, extraOpts = {}) => {
+      const storedToken = token || localStorage.getItem("career_token");
+      const res = await fetch(`${API_BASE}/api/v1/gemini/chat`, {
+        method: "POST",
+        headers: getHeaders(storedToken),
+        body: JSON.stringify({ message, mode, ...extraOpts }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 401) throw new Error("auth_required");
+        throw new Error(err.detail || "Chat service unavailable");
+      }
+      return res.json(); // { reply, source, had_market_context, session_id }
+    },
+
+    /**
+     * SSE streaming chat. Returns a ReadableStream.
+     * Usage: for await (const chunk of stream) { ... }
+     */
+    chatStream: async (message, mode = "student", token = null, extraOpts = {}) => {
+      const storedToken = token || localStorage.getItem("career_token");
+      const res = await fetch(`${API_BASE}/api/v1/gemini/chat/stream`, {
+        method: "POST",
+        headers: getHeaders(storedToken),
+        body: JSON.stringify({ message, mode, ...extraOpts }),
+      });
+      if (!res.ok) {
+        if (res.status === 401) throw new Error("auth_required");
+        throw new Error("Stream chat service unavailable");
+      }
+      return res.body; // Caller reads SSE chunks
+    },
+
+    /**
+     * Retrieve persisted chat history for the current user.
+     */
+    getChatHistory: async (mode = "student", token = null) => {
+      const storedToken = token || localStorage.getItem("career_token");
+      const res = await fetch(
+        `${API_BASE}/api/v1/gemini/chat/history?mode=${encodeURIComponent(mode)}`,
+        { headers: getHeaders(storedToken) }
+      );
+      if (!res.ok) throw new Error("Failed to fetch chat history");
+      return res.json(); // { session_id, mode, messages: [] }
+    },
+
+    /**
+     * Clear server-side chat history for the current user.
+     */
+    clearChatHistory: async (mode = "student", token = null) => {
+      const storedToken = token || localStorage.getItem("career_token");
+      const res = await fetch(
+        `${API_BASE}/api/v1/gemini/chat/history?mode=${encodeURIComponent(mode)}`,
+        { method: "DELETE", headers: getHeaders(storedToken) }
+      );
+      if (!res.ok) throw new Error("Failed to clear chat history");
+      return res.json();
+    },
+  },
 };
+
 

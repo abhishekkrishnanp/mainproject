@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef } from "react";
 import { api } from "../services/api";
-import { 
-  Bot, 
-  MessageSquare, 
-  X, 
-  Minimize2, 
-  Send, 
-  Sparkles, 
-  User, 
-  Users, 
-  GraduationCap, 
-  RefreshCw, 
+import {
+  Bot,
+  MessageSquare,
+  X,
+  Minimize2,
+  Send,
+  Sparkles,
+  User,
+  Users,
+  GraduationCap,
+  RefreshCw,
   ChevronRight,
   Shield,
   Lightbulb
@@ -88,20 +88,56 @@ export default function RightAssistantChatbot({ activeTab, currentUser, parentSe
     setInputText("");
     setLoading(true);
 
+    // Format recent message history (up to last 8 turns) to maintain conversational context
+    const recentHistory = messages
+      .filter((m) => m.sender === "user" || m.sender === "assistant")
+      .slice(-8)
+      .map((m) => ({
+        role: m.sender === "user" ? "user" : "assistant",
+        text: m.text,
+      }));
+
     try {
       const extraContext = {
         student_name: currentUser?.name || currentUser?.full_name || parentSession?.student_name,
         education_level: currentUser?.education_level,
         current_page: activeTab,
+        history: recentHistory,
       };
 
-      const res = await api.askAssistant(query, mode, extraContext);
+      // Use the new authenticated chat endpoint when a token is available.
+      // Falls back to legacy /assistant/chat for unauthenticated sessions (parent mode).
+      const storedToken = localStorage.getItem("career_token");
+      let replyText = "";
+      let source = "system_fallback";
+
+      if (storedToken) {
+        try {
+          const chatRes = await api.gemini.chat(query, mode, storedToken, {
+            current_page: activeTab,
+          });
+          replyText = chatRes.reply || "";
+          source = chatRes.source || "gemini";
+        } catch (chatErr) {
+          // If auth_required or service down, fall back to legacy endpoint
+          if (chatErr.message !== "auth_required") throw chatErr;
+          const res = await api.askAssistant(query, mode, extraContext);
+          replyText = res.reply || res.message || "";
+          source = res.source || "system_fallback";
+        }
+      } else {
+        // No token — use legacy unauthenticated endpoint
+        const res = await api.askAssistant(query, mode, extraContext);
+        replyText = res.reply || res.message || "";
+        source = res.source || "system_fallback";
+      }
 
       const aiMsg = {
         id: Date.now() + 1,
         sender: "assistant",
-        text: res.reply || "I am processing your query. Feel free to explore the assessment or ask another question!",
+        text: replyText || "I am processing your query. Feel free to explore the assessment or ask another question!",
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        source,
       };
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
@@ -110,7 +146,7 @@ export default function RightAssistantChatbot({ activeTab, currentUser, parentSe
         {
           id: Date.now() + 1,
           sender: "assistant",
-          text: "I am having a brief connection issue. Please feel free to ask again or check the assessment page.",
+          text: "I am having trouble connecting to the career service right now. Please try again or ask another question.",
           time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
@@ -442,14 +478,21 @@ export default function RightAssistantChatbot({ activeTab, currentUser, parentSe
               background: "rgba(15, 23, 42, 0.95)",
               borderTop: "1px solid var(--border-card)",
               display: "flex",
+              alignItems: "flex-end",
               gap: "0.5rem"
             }}
           >
-            <input
-              type="text"
-              placeholder={mode === "parent" ? "Ask parent advisory question..." : "Ask student career question..."}
+            <textarea
+              rows={1}
+              placeholder={mode === "parent" ? "Ask parent advisory question... (Shift+Enter for newline)" : "Ask student career question... (Shift+Enter for newline)"}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
               disabled={loading}
               style={{
                 flex: 1,
@@ -459,7 +502,10 @@ export default function RightAssistantChatbot({ activeTab, currentUser, parentSe
                 color: "#fff",
                 padding: "0.6rem 0.85rem",
                 fontSize: "0.875rem",
-                outline: "none"
+                outline: "none",
+                resize: "none",
+                maxHeight: "100px",
+                fontFamily: "inherit"
               }}
             />
             <button
@@ -469,7 +515,8 @@ export default function RightAssistantChatbot({ activeTab, currentUser, parentSe
               style={{
                 padding: "0.6rem 0.9rem",
                 borderRadius: "10px",
-                background: mode === "parent" ? "#10b981" : "var(--primary)"
+                background: mode === "parent" ? "#10b981" : "var(--primary)",
+                height: "38px"
               }}
             >
               <Send size={16} />

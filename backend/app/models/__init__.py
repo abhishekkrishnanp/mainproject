@@ -5,6 +5,7 @@ from app.models.career import Career, CareerSkill, Exam, Scholarship, CareerMyth
 from app.models.roadmap import Roadmap, RoadmapItem, SkillGap, StudentSkill
 from app.models.simulation import SimulationRun, SimulationYear
 from app.models.recommendation import CareerRecommendation, SelectedCareer
+from app.models.chat import ChatSession, ChatMessage
 
 from app.models.student_profile import StudentProfile
 from app.models.parent_account import ParentAccount
@@ -28,4 +29,5 @@ __all__ = [
     "Roadmap", "RoadmapItem", "SkillGap", "StudentSkill",
     "SimulationRun", "SimulationYear",
     "CareerRecommendation", "SelectedCareer",
+    "ChatSession", "ChatMessage",
 ]

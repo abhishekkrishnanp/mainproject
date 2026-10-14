@@ -1,16 +1,16 @@
 """
 Self-Assessment Agent
 ────────────────────────────────────────────────────────────────────────────
-Fully implemented specialized agent for Phase 1 (First 35-40%).
-Conducts a deep career discovery interview (25-40 interactions), maintains
-memory across questions, dynamically branches based on student category,
-and generates initial personality, interest, and top 5 career recommendations.
+Autonomous agent conducting deep, multi-dimensional, context-aware career discovery.
+Uses Gemini to dynamically generate follow-up questions from actual conversation history,
+tracks previously asked questions, adapts depth, and generates individualized career reports.
 """
 from typing import Dict, Any, List, Optional
 import logging
 import asyncio
 
 from app.agents.base import CareerAgent
+from app.services.dynamic_assessment_engine import dynamic_assessment_engine, INITIAL_QUESTION
 from app.services.conversational_assessment import assessment_engine
 from app.services.llm_service import llm_service
 
@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 class SelfAssessmentAgent(CareerAgent):
     """
     Agent 1: Self-Assessment Agent
-    Inherits CareerAgent contract.
+    Dynamically generates adaptive questions, manages conversation state,
+    and synthesizes personalized career trajectories.
     """
 
     agent_name: str = "SelfAssessmentAgent"
@@ -28,6 +29,7 @@ class SelfAssessmentAgent(CareerAgent):
 
     def __init__(self):
         self.engine = assessment_engine
+        self.dynamic_engine = dynamic_assessment_engine
 
     def analyze(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -35,39 +37,25 @@ class SelfAssessmentAgent(CareerAgent):
         """
         state = data.get("assessment_state", data)
         return {
-            "current_question": state.get("current_question_index", 0),
-            "total_planned": state.get("total_questions_planned", 25),
-            "category": state.get("category"),
-            "traits": state.get("personality_traits", {}),
-            "answered_count": len(state.get("previous_answers", [])),
+            "current_question": state.get("current_step", len(state.get("conversation_history", []))),
+            "total_planned": state.get("total_steps", self.dynamic_engine.TARGET_TURNS),
+            "answered_count": len(state.get("conversation_history", [])),
+            "focus_domain": state.get("focus_domain"),
         }
 
     def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Processes incoming message from student, updates memory, and selects next step.
+        Synchronous fallback for base CareerAgent compliance.
         """
         student_id = data.get("student_id", "student_1")
-        answer_text = data.get("message", "").strip()
-        state = data.get("assessment_state") or self.engine.get_initial_state(student_id)
-        current_question_def = data.get("current_question_def")
-
-        # Record answer if message was provided
-        if answer_text:
-            qid = current_question_def.get("question_id") if current_question_def else f"q_{len(state.get('previous_answers', []))}"
-            state = self.engine.record_answer(state, qid, answer_text, current_question_def)
-
-        # Get next question
-        next_q = self.engine.get_next_question(state)
-
-        is_completed = (next_q is None)
-        profile_data = None
-        if is_completed:
-            state["status"] = "completed"
-            profile_data = self.engine.generate_career_profile(state)
+        state = data.get("assessment_state") or self.dynamic_engine.get_initial_state(student_id)
+        history = state.get("conversation_history", [])
+        is_completed = len(history) >= self.dynamic_engine.TARGET_TURNS
+        profile_data = self.dynamic_engine._synthesize_fallback_profile(history) if is_completed else None
 
         return {
             "state": state,
-            "next_question": next_q,
+            "next_question": None if is_completed else INITIAL_QUESTION,
             "is_completed": is_completed,
             "profile": profile_data,
         }
@@ -77,59 +65,43 @@ class SelfAssessmentAgent(CareerAgent):
         Synthesizes final self-assessment profile and recommendations.
         """
         state = data.get("assessment_state", data)
-        return self.engine.generate_career_profile(state)
+        history = state.get("conversation_history", [])
+        return self.dynamic_engine._synthesize_fallback_profile(history)
 
     # ─── High-Level Assessment Session Handlers ───
 
     def start_new_session(self, student_id: str) -> Dict[str, Any]:
-        """Start a fresh deep discovery interview."""
-        state = self.engine.get_initial_state(student_id)
-        first_q = self.engine.get_next_question(state)
+        """Start a fresh dynamic discovery interview."""
+        state = self.dynamic_engine.get_initial_state(student_id)
         return {
             "state": state,
-            "current_question": first_q,
+            "current_question": INITIAL_QUESTION,
             "is_completed": False,
-            "message": "Welcome to your deep career self-assessment discovery. Let's begin by understanding your current educational situation.",
+            "message": "Welcome to your deep career self-assessment discovery. Let's explore your authentic interests, technical passions, and career aspirations.",
         }
 
     async def handle_student_response(
         self, student_id: str, current_state: Dict[str, Any], answer_text: str, question_def: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Handles student answer, updates state, and provides next question with conversational intro.
+        Handles student answer, updates state, and provides next dynamic question using Gemini.
         """
-        processed = self.process({
-            "student_id": student_id,
-            "message": answer_text,
-            "assessment_state": current_state,
-            "current_question_def": question_def,
-        })
+        # Ensure state has dynamic fields
+        if "conversation_history" not in current_state and "previous_answers" in current_state:
+            # Migrate older state if present
+            current_state["conversation_history"] = [
+                {"step": idx + 1, "question": a.get("question_text", "Question"), "answer": a.get("answer", "")}
+                for idx, a in enumerate(current_state.get("previous_answers", []))
+            ]
 
-        new_state = processed["state"]
-        next_q = processed["next_question"]
-        is_completed = processed["is_completed"]
+        result = await self.dynamic_engine.generate_next_step(
+            student_id=student_id,
+            current_state=current_state,
+            user_answer=answer_text,
+            current_question_def=question_def,
+        )
 
-        conversational_prefix = ""
-        # Optionally enhance conversational flow with LLM if available
-        if llm_service.is_configured() and next_q and not is_completed:
-            prompt = (
-                f"The student just answered: '{answer_text}' to the question '{question_def.get('question_text')}'. "
-                f"We are continuing our deep career interview. The next question to ask is: '{next_q.get('question_text')}'. "
-                f"In 1 short, warm, supportive sentence (under 15 words), acknowledge their previous answer and naturally bridge into the next question."
-            )
-            llm_text = await llm_service.generate_response(prompt)
-            if llm_text:
-                conversational_prefix = llm_text.strip() + " "
-
-        return {
-            "state": new_state,
-            "next_question": next_q,
-            "conversational_prefix": conversational_prefix,
-            "is_completed": is_completed,
-            "profile": processed.get("profile"),
-            "current_step": len(new_state.get("previous_answers", [])),
-            "total_steps": new_state.get("total_questions_planned", 25),
-        }
+        return result
 
 
 self_assessment_agent = SelfAssessmentAgent()

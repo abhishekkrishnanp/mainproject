@@ -1,325 +1,291 @@
 """
 Roadmap Generation Agent
 ────────────────────────────────────────────────────────────────────────────
-Responsibility: Generate a personalized, stage-by-stage career roadmap based
-on the student's skill gap and selected career. Each stage includes skills,
-topics, projects, resources, and an estimated duration.
+Responsibility:
+Produce an actionable, personalized 12–24 month roadmap helping the user progress
+from their current educational or career stage toward a selected career.
+
+Adapts explicitly for:
+- School students (stream choices, board preparation, KEAM/JEE/NEET/CUET, coding clubs)
+- College & Postgraduate students (internships, capstone projects, GATE/certifications, GitHub portfolio)
+- Working professionals (evening/weekend upskilling, bridge projects, lateral transitions)
+
+Milestones include:
+- Target outcome
+- Concrete tasks
+- Required skills or prerequisites
+- Recommended resources (documentation, courses, books)
+- Estimated duration
+- Estimated cost (highlighting free & low-cost pathways)
+- Measurable completion criterion
+- Relevant projects or portfolio evidence
+- Next milestone linkage
 """
 from __future__ import annotations
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 
-logger = logging.getLogger(__name__)
-
-# ─── Career Roadmap Templates ─────────────────────────────────────────────────
-# Each key is a career title. Stages are ordered and can be filtered based
-# on the student's skill gap (skipped if all stage skills are already Strong).
-
-ROADMAP_TEMPLATES: Dict[str, List[Dict[str, Any]]] = {
-    "Machine Learning Engineer": [
-        {
-            "stage_number": 1,
-            "stage_title": "Programming Fundamentals",
-            "description": "Build a solid foundation in Python programming.",
-            "skills": ["Python", "Data Structures", "Algorithms"],
-            "topics": ["Variables & Types", "Control Flow", "Functions", "OOP", "File I/O"],
-            "projects": ["Calculator App", "Student Grade Manager", "Basic CLI Tool"],
-            "resources": [
-                {"name": "Python for Everybody (Coursera)", "url": "https://coursera.org/specializations/python", "type": "Course"},
-                {"name": "Automate the Boring Stuff with Python", "url": "https://automatetheboringstuff.com", "type": "Book"},
-            ],
-            "estimated_duration": "4-6 weeks",
-            "skill_keys": ["Python", "Data Structures"],
-        },
-        {
-            "stage_number": 2,
-            "stage_title": "Mathematics & Statistics for ML",
-            "description": "Develop the mathematical foundation required for machine learning.",
-            "skills": ["Statistics", "Linear Algebra", "Calculus", "Probability"],
-            "topics": ["Descriptive Statistics", "Probability Distributions", "Matrix Operations", "Gradient Descent"],
-            "projects": ["Statistical Analysis of a Dataset", "Linear Regression from Scratch"],
-            "resources": [
-                {"name": "Khan Academy - Statistics", "url": "https://khanacademy.org/math/statistics-probability", "type": "Course"},
-                {"name": "3Blue1Brown - Linear Algebra", "url": "https://youtube.com/c/3blue1brown", "type": "Video"},
-            ],
-            "estimated_duration": "6-8 weeks",
-            "skill_keys": ["Statistics", "Linear Algebra", "Calculus"],
-        },
-        {
-            "stage_number": 3,
-            "stage_title": "Data Analysis & Visualization",
-            "description": "Learn to work with data using pandas and visualize insights.",
-            "skills": ["NumPy", "Pandas", "Matplotlib", "SQL"],
-            "topics": ["DataFrame Operations", "Data Cleaning", "Exploratory Data Analysis", "SQL Queries"],
-            "projects": ["COVID-19 Data Analysis", "Sales Dashboard", "Customer Segmentation"],
-            "resources": [
-                {"name": "Pandas Documentation", "url": "https://pandas.pydata.org/docs", "type": "Documentation"},
-                {"name": "Kaggle - Pandas Course", "url": "https://kaggle.com/learn/pandas", "type": "Course"},
-            ],
-            "estimated_duration": "4-5 weeks",
-            "skill_keys": ["NumPy", "Pandas", "SQL"],
-        },
-        {
-            "stage_number": 4,
-            "stage_title": "Machine Learning Core",
-            "description": "Master classical ML algorithms using Scikit-learn.",
-            "skills": ["Machine Learning", "Scikit-learn", "Feature Engineering"],
-            "topics": ["Supervised Learning", "Unsupervised Learning", "Model Evaluation", "Cross-Validation", "Hyperparameter Tuning"],
-            "projects": ["House Price Prediction", "Spam Email Classifier", "Customer Churn Prediction"],
-            "resources": [
-                {"name": "Andrew Ng ML Course (Coursera)", "url": "https://coursera.org/learn/machine-learning", "type": "Course"},
-                {"name": "Hands-On Machine Learning (O'Reilly)", "url": "https://oreilly.com/library/view/hands-on-machine-learning", "type": "Book"},
-            ],
-            "estimated_duration": "8-10 weeks",
-            "skill_keys": ["Machine Learning"],
-        },
-        {
-            "stage_number": 5,
-            "stage_title": "Deep Learning",
-            "description": "Explore neural networks and deep learning with TensorFlow/PyTorch.",
-            "skills": ["Deep Learning", "TensorFlow", "Neural Networks", "CNN", "RNN"],
-            "topics": ["Perceptrons", "Backpropagation", "CNN for Images", "RNN/LSTM for Sequences", "Transfer Learning"],
-            "projects": ["Image Classifier (CNN)", "Sentiment Analysis (LSTM)", "Object Detection"],
-            "resources": [
-                {"name": "Deep Learning Specialization (Coursera)", "url": "https://coursera.org/specializations/deep-learning", "type": "Course"},
-                {"name": "TensorFlow Official Tutorials", "url": "https://tensorflow.org/tutorials", "type": "Documentation"},
-            ],
-            "estimated_duration": "10-12 weeks",
-            "skill_keys": ["Deep Learning", "TensorFlow"],
-        },
-        {
-            "stage_number": 6,
-            "stage_title": "Projects & Portfolio",
-            "description": "Build end-to-end ML projects to demonstrate your skills.",
-            "skills": ["Project Development", "GitHub", "Documentation"],
-            "topics": ["ML Pipeline", "Model Deployment (Flask/FastAPI)", "Version Control", "Model Monitoring"],
-            "projects": ["End-to-End ML Web App", "Kaggle Competition Entry", "GitHub Portfolio"],
-            "resources": [
-                {"name": "Made With ML", "url": "https://madewithml.com", "type": "Course"},
-                {"name": "Full Stack Deep Learning", "url": "https://fullstackdeeplearning.com", "type": "Course"},
-            ],
-            "estimated_duration": "8-10 weeks",
-            "skill_keys": ["GitHub", "Documentation"],
-        },
-        {
-            "stage_number": 7,
-            "stage_title": "Job Preparation",
-            "description": "Prepare for ML Engineer interviews and job applications.",
-            "skills": ["Interview Prep", "System Design", "Behavioral Skills"],
-            "topics": ["ML Interview Questions", "Coding Rounds", "ML System Design", "Resume Building"],
-            "projects": ["Mock Interviews", "LinkedIn Profile Optimization"],
-            "resources": [
-                {"name": "ML Interview Preparation", "url": "https://github.com/alexeygrigorev/mlbookcamp-code", "type": "Book"},
-                {"name": "LeetCode - ML Track", "url": "https://leetcode.com", "type": "Platform"},
-            ],
-            "estimated_duration": "4-6 weeks",
-            "skill_keys": ["Interview Prep"],
-        },
-    ],
-    "Data Scientist": [
-        {
-            "stage_number": 1, "stage_title": "Python & Programming Basics",
-            "description": "Foundation in Python and data structures.",
-            "skills": ["Python", "Data Structures"], "topics": ["Python Basics", "OOP", "Data Structures"],
-            "projects": ["Basic Data Analysis Script"], "estimated_duration": "4-6 weeks",
-            "resources": [{"name": "Python for Data Science (Coursera)", "url": "https://coursera.org", "type": "Course"}],
-            "skill_keys": ["Python"],
-        },
-        {
-            "stage_number": 2, "stage_title": "Statistics & Probability",
-            "description": "Core mathematics for data science.",
-            "skills": ["Statistics", "Probability", "Linear Algebra"], "topics": ["Hypothesis Testing", "Distributions", "Regression"],
-            "projects": ["A/B Testing Analysis"], "estimated_duration": "6-8 weeks",
-            "resources": [{"name": "Statistics with Python (Coursera)", "url": "https://coursera.org", "type": "Course"}],
-            "skill_keys": ["Statistics"],
-        },
-        {
-            "stage_number": 3, "stage_title": "Data Wrangling & EDA",
-            "description": "Data cleaning, exploration and visualization.",
-            "skills": ["Pandas", "NumPy", "Matplotlib", "Seaborn", "SQL"], "topics": ["Data Cleaning", "EDA", "Visualization"],
-            "projects": ["Exploratory Analysis on Real Dataset"], "estimated_duration": "5-6 weeks",
-            "resources": [{"name": "Kaggle EDA Tutorials", "url": "https://kaggle.com/learn", "type": "Course"}],
-            "skill_keys": ["Pandas", "SQL"],
-        },
-        {
-            "stage_number": 4, "stage_title": "Machine Learning",
-            "description": "Classical ML algorithms and model building.",
-            "skills": ["Machine Learning", "Scikit-learn"], "topics": ["Classification", "Regression", "Clustering"],
-            "projects": ["Prediction Model for Business Problem"], "estimated_duration": "8-10 weeks",
-            "resources": [{"name": "ML Course - Andrew Ng", "url": "https://coursera.org", "type": "Course"}],
-            "skill_keys": ["Machine Learning"],
-        },
-        {
-            "stage_number": 5, "stage_title": "Advanced Analytics & Communication",
-            "description": "Business communication of data insights.",
-            "skills": ["Data Storytelling", "Tableau/Power BI", "Communication"], "topics": ["Dashboard Design", "Stakeholder Presentations"],
-            "projects": ["Business Intelligence Dashboard"], "estimated_duration": "4-5 weeks",
-            "resources": [{"name": "Tableau Public Tutorials", "url": "https://public.tableau.com", "type": "Platform"}],
-            "skill_keys": [],
-        },
-        {
-            "stage_number": 6, "stage_title": "Capstone & Job Preparation",
-            "description": "Portfolio projects and interview preparation.",
-            "skills": ["Portfolio Building", "Interview Skills"], "topics": ["Case Studies", "Mock Interviews", "Résumé"],
-            "projects": ["Data Science Portfolio on GitHub"], "estimated_duration": "6-8 weeks",
-            "resources": [{"name": "DS Interview Questions", "url": "https://datascienceinterviewprep.com", "type": "Book"}],
-            "skill_keys": [],
-        },
-    ],
-    "Software Engineer": [
-        {
-            "stage_number": 1, "stage_title": "Core Programming",
-            "description": "Master a primary programming language (Python/Java/C++).",
-            "skills": ["Python", "Java", "Data Structures", "Algorithms"],
-            "topics": ["OOP", "Data Structures", "Sorting Algorithms", "Recursion"],
-            "projects": ["CLI Applications", "Mini Games"],
-            "resources": [{"name": "CS50 (Harvard)", "url": "https://cs50.harvard.edu", "type": "Course"}],
-            "estimated_duration": "6-8 weeks", "skill_keys": ["Python", "Java"],
-        },
-        {
-            "stage_number": 2, "stage_title": "Web Development Fundamentals",
-            "description": "Build full-stack web applications.",
-            "skills": ["HTML/CSS", "JavaScript", "React", "Node.js"],
-            "topics": ["REST APIs", "Frontend Frameworks", "Backend Development"],
-            "projects": ["Portfolio Website", "CRUD Web App"],
-            "resources": [{"name": "The Odin Project", "url": "https://theodinproject.com", "type": "Course"}],
-            "estimated_duration": "8-10 weeks", "skill_keys": ["JavaScript"],
-        },
-        {
-            "stage_number": 3, "stage_title": "Databases & Backend",
-            "description": "SQL, NoSQL, and API development.",
-            "skills": ["SQL", "PostgreSQL", "MongoDB", "REST APIs"],
-            "topics": ["Database Design", "ORM", "API Development", "Authentication"],
-            "projects": ["REST API Backend", "Database-driven Web App"],
-            "resources": [{"name": "FastAPI Documentation", "url": "https://fastapi.tiangolo.com", "type": "Documentation"}],
-            "estimated_duration": "6-8 weeks", "skill_keys": ["SQL"],
-        },
-        {
-            "stage_number": 4, "stage_title": "System Design & DevOps",
-            "description": "Scalable systems and deployment.",
-            "skills": ["Docker", "Git", "CI/CD", "System Design"],
-            "topics": ["Microservices", "Docker", "Git Flow", "Load Balancing"],
-            "projects": ["Containerized Deployment", "CI/CD Pipeline"],
-            "resources": [{"name": "System Design Primer (GitHub)", "url": "https://github.com/donnemartin/system-design-primer", "type": "Book"}],
-            "estimated_duration": "6-8 weeks", "skill_keys": ["Docker", "Git"],
-        },
-        {
-            "stage_number": 5, "stage_title": "DSA & Interview Preparation",
-            "description": "Competitive coding and technical interviews.",
-            "skills": ["Problem Solving", "LeetCode", "System Design"],
-            "topics": ["Trees", "Graphs", "Dynamic Programming", "Behavioral Questions"],
-            "projects": ["LeetCode 100 Problems", "Mock System Design Interviews"],
-            "resources": [{"name": "NeetCode", "url": "https://neetcode.io", "type": "Platform"}],
-            "estimated_duration": "8-10 weeks", "skill_keys": [],
-        },
-    ],
-}
-
-# Default template for careers without specific templates
-DEFAULT_STAGES = [
-    {
-        "stage_number": 1, "stage_title": "Foundation Skills",
-        "description": "Build the fundamental skills required for this career.",
-        "skills": [], "topics": ["Core Concepts", "Industry Overview", "Basic Tools"],
-        "projects": ["Beginner Project"], "resources": [], "estimated_duration": "4-6 weeks", "skill_keys": [],
-    },
-    {
-        "stage_number": 2, "stage_title": "Core Technical Skills",
-        "description": "Master the primary technical competencies.",
-        "skills": [], "topics": ["Advanced Concepts", "Practical Applications"],
-        "projects": ["Intermediate Project"], "resources": [], "estimated_duration": "6-8 weeks", "skill_keys": [],
-    },
-    {
-        "stage_number": 3, "stage_title": "Specialization",
-        "description": "Deepen expertise in your chosen specialization area.",
-        "skills": [], "topics": ["Specialized Knowledge", "Case Studies"],
-        "projects": ["Capstone Project"], "resources": [], "estimated_duration": "8-10 weeks", "skill_keys": [],
-    },
-    {
-        "stage_number": 4, "stage_title": "Portfolio & Internship",
-        "description": "Build your professional portfolio and gain real-world experience.",
-        "skills": ["Portfolio Building", "Networking"], "topics": ["Resume Writing", "LinkedIn", "GitHub"],
-        "projects": ["Portfolio Website", "Open Source Contribution"], "resources": [], "estimated_duration": "4-6 weeks", "skill_keys": [],
-    },
-    {
-        "stage_number": 5, "stage_title": "Job Preparation",
-        "description": "Prepare for interviews and job applications.",
-        "skills": ["Interview Skills", "Communication"], "topics": ["Mock Interviews", "Technical Tests"],
-        "projects": ["Interview Practice"], "resources": [], "estimated_duration": "4 weeks", "skill_keys": [],
-    },
-]
-
-
 from app.agents.base import CareerAgent
+
+logger = logging.getLogger(__name__)
 
 
 class RoadmapAgent(CareerAgent):
     """
-    Agent ID: roadmap_agent
-    Phase 4 Target: 12-24 month milestone roadmap with courses, certifications, internships.
+    Agent 4: Career Roadmap Generator Agent
+    Constructs multi-stage, 12-24 month milestone roadmaps tailored to user category and skill gaps.
     """
 
     agent_name: str = "RoadmapAgent"
-    description: str = "Generates actionable 12-24 month learning and career progression roadmaps."
+    description: str = "Generates actionable 12-24 month milestone plans with measurable completion criteria."
     AGENT_ID = "roadmap_agent"
 
     def analyze(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze career goal and skill gaps to plan milestone duration."""
-        return {"status": "ready_for_phase_4", "career": data.get("career_title", "Unknown")}
+        return {"status": "active", "career": data.get("career_title", "Unknown")}
 
     def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process roadmap stages."""
-        return {"status": "skeleton_ready", "message": "Roadmap Agent ready for Phase 4 expansion."}
-
-    def generate_output(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate final roadmap output."""
-        return {"agent": self.agent_name, "status": "skeleton_ready", "result": data}
-
-    def generate(self, career: Any, skill_gap: Dict[str, Any]) -> List[Dict[str, Any]]:
-        template = ROADMAP_TEMPLATES.get(career.title)
-        if template:
-            stages = self._build_from_template(template, skill_gap)
-        else:
-            stages = self._build_generic(career, skill_gap)
-        logger.info(f"[RoadmapAgent] Generated {len(stages)} stages for {career.title}")
-        return stages
-
-    def _build_from_template(
-        self, template: List[Dict], skill_gap: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        missing_and_improve = {
-            e["skill"].lower()
-            for e in (skill_gap.get("skills_to_improve", []) + skill_gap.get("missing_skills", []))
+        career = data.get("career")
+        skill_gap = data.get("skill_gap", {})
+        profile = data.get("profile", {})
+        return {
+            "stages": self.generate(career, skill_gap, profile),
+            "status": "completed",
         }
 
-        result = []
-        for stage in template:
-            skill_keys = [s.lower() for s in stage.get("skill_keys", [])]
-            # Always include the stage; mark which skills are still needed
-            stage_copy = dict(stage)
-            stage_copy.pop("skill_keys", None)
-            # Highlight missing skills
-            if skill_keys:
-                stage_copy["_needs_attention"] = any(k in missing_and_improve for k in skill_keys)
-            result.append(stage_copy)
-        return result
+    def generate_output(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        return self.process(data)
 
-    def _build_generic(self, career: Any, skill_gap: Dict[str, Any]) -> List[Dict[str, Any]]:
-        stages = []
-        missing_skills = [e["skill"] for e in skill_gap.get("missing_skills", [])]
-        improve_skills = [e["skill"] for e in skill_gap.get("skills_to_improve", [])]
+    def generate(
+        self,
+        career: Any,
+        skill_gap: Dict[str, Any],
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Builds tailored stages adapting for school students, college students, or working professionals.
+        """
+        profile = profile or {}
+        edu_level = (profile.get("education_level") or "").lower()
+        missing_skills = [e["skill"] if isinstance(e, dict) else str(e) for e in skill_gap.get("missing_skills", [])]
+        improve_skills = [e["skill"] if isinstance(e, dict) else str(e) for e in skill_gap.get("skills_to_improve", [])]
 
-        for i, stage in enumerate(DEFAULT_STAGES):
-            s = dict(stage)
-            if i == 0 and improve_skills:
-                s["skills"] = improve_skills[:3]
-                s["description"] = f"Improve foundational skills: {', '.join(improve_skills[:3])}"
-            elif i == 1 and missing_skills:
-                s["skills"] = missing_skills[:4]
-                s["description"] = f"Learn the core required skills: {', '.join(missing_skills[:4])}"
-            elif i == 2 and len(missing_skills) > 4:
-                s["skills"] = missing_skills[4:]
-                s["description"] = f"Master advanced required skills: {', '.join(missing_skills[4:])}"
-            s.pop("skill_keys", None)
-            stages.append(s)
+        is_school = "school" in edu_level or "10th" in edu_level or "12th" in edu_level
+        is_professional = "working" in edu_level or "professional" in edu_level
+
+        if is_school:
+            return self._build_school_student_roadmap(career, missing_skills, improve_skills)
+        elif is_professional:
+            return self._build_working_professional_roadmap(career, missing_skills, improve_skills)
+        else:
+            return self._build_college_student_roadmap(career, missing_skills, improve_skills)
+
+    def _build_college_student_roadmap(
+        self, career: Any, missing: List[str], improve: List[str]
+    ) -> List[Dict[str, Any]]:
+        title = career.title
+        c_req = list(career.required_skills or ["Core Skills"])
+        
+        stages = [
+            {
+                "stage_number": 1,
+                "stage_title": "Foundational Mastery & Environment Setup",
+                "target_outcome": f"Solidify foundational problem solving and version control needed for {title}.",
+                "description": f"Focus on core programming ({c_req[0] if c_req else 'Python'}), data structures, and Git workflow.",
+                "skills": [c_req[0]] if c_req else ["Python", "Git"],
+                "topics": ["Syntax & Idiomatic Coding", "Object-Oriented Design", "Data Structures", "Git & GitHub Workflow"],
+                "projects": [f"{title} Foundations CLI App", "Data Processing Utilities"],
+                "resources": [
+                    {"name": "NPTEL / Coursera Core Computer Science", "url": "https://nptel.ac.in", "type": "Free Government Course"},
+                    {"name": "Official Documentation & Language Guide", "url": "https://docs.python.org/3/", "type": "Documentation"}
+                ],
+                "estimated_duration": "4–6 weeks (10 hrs/week)",
+                "estimated_cost": "Free (Open Courseware)",
+                "completion_criterion": "Publish a clean, documented repository on GitHub with unit tests and clear README.",
+                "suggested_next_milestone": "Stage 2: Core Domain Competencies",
+            },
+            {
+                "stage_number": 2,
+                "stage_title": "Core Technical Competencies & Tooling",
+                "target_outcome": "Master the primary frameworks and mathematical/analytical foundations.",
+                "description": f"Bridge identified skill gaps in {', '.join((missing + improve)[:3]) or 'specialized tooling'}.",
+                "skills": (missing + improve)[:3] or c_req[1:3],
+                "topics": ["Algorithms & Statistical Modeling", "Framework Architecture", "Database & Query Optimization"],
+                "projects": [f"End-to-End {title} Prototype", "Database-driven Analytics Service"],
+                "resources": [
+                    {"name": "FastAPI & Scikit-learn Official Labs", "url": "https://scikit-learn.org", "type": "Hands-on Lab"},
+                    {"name": "Kaggle Applied Micro-Courses", "url": "https://kaggle.com/learn", "type": "Interactive Platform"}
+                ],
+                "estimated_duration": "6–8 weeks (12 hrs/week)",
+                "estimated_cost": "Free",
+                "completion_criterion": "Deploy an interactive web API or dashboard accessible via public URL (HuggingFace Spaces / Render).",
+                "suggested_next_milestone": "Stage 3: Advanced Pipeline & Cloud Integration",
+            },
+            {
+                "stage_number": 3,
+                "stage_title": "Production Deployment & Cloud Integration",
+                "target_outcome": "Understand deployment, containerization, and industry reliability standards.",
+                "description": "Containerize workflows with Docker, configure CI/CD pipelines, and connect cloud services.",
+                "skills": ["Docker", "REST APIs", "Cloud Services", "CI/CD"],
+                "topics": ["Containerization", "Automated Testing", "Cloud Deployment (AWS/GCP)", "Monitoring"],
+                "projects": ["Containerized Production Microservice with GitHub Actions CI/CD"],
+                "resources": [
+                    {"name": "Docker & Cloud Native Computing Foundation Guides", "url": "https://docs.docker.com", "type": "Documentation"},
+                    {"name": "AWS Skill Builder Free Tier", "url": "https://explore.skillbuilder.aws", "type": "Official Lab"}
+                ],
+                "estimated_duration": "5–7 weeks (10 hrs/week)",
+                "estimated_cost": "₹0 – ₹500 (Free tier cloud accounts)",
+                "completion_criterion": "Continuous integration build passing on GitHub with automated deployment.",
+                "suggested_next_milestone": "Stage 4: Industry Capstone & Internship Outreach",
+            },
+            {
+                "stage_number": 4,
+                "stage_title": "Capstone Portfolio & Regional Placement Preparation",
+                "target_outcome": "Establish proof of job readiness tailored to Kerala tech clusters and national recruiters.",
+                "description": "Build an impressive capstone solving a regional or industry problem, polish resume, and practice interviews.",
+                "skills": ["System Architecture", "Technical Communication", "Mock Coding Interviews"],
+                "topics": ["System Design Basics", "Portfolio Curation", "Technical Interview Problem Solving", "Kerala Tech Ecosystem Networking"],
+                "projects": [f"Flagship Capstone Project for {title} addressing a real-world dataset or problem"],
+                "resources": [
+                    {"name": "Kerala Startup Mission (KSUM) Placement Portal", "url": "https://startupmission.kerala.gov.in", "type": "Regional Hub"},
+                    {"name": "NeetCode / LeetCode Interview Tracks", "url": "https://neetcode.io", "type": "Practice Platform"}
+                ],
+                "estimated_duration": "6–8 weeks (15 hrs/week)",
+                "estimated_cost": "Free",
+                "completion_criterion": "Portfolio reviewed with 3 complete showcase repositories and 5 applied internship applications.",
+                "suggested_next_milestone": "Stage 5: Entry-Level Role Transition",
+            },
+            {
+                "stage_number": 5,
+                "stage_title": "Targeted Hiring & Industry Onboarding",
+                "target_outcome": "Secure an entry-level position or industrial trainee role in Thiruvananthapuram, Kochi, or national tech hubs.",
+                "description": "Engage with Technopark/Infopark campus hiring drives, off-campus referrals, and off-campus hackathons.",
+                "skills": ["Professional Presentation", "Negotiation", "Workplace Execution"],
+                "topics": ["Behavioral Interviews", "Technical Presentation", "First 90 Days Success Strategy"],
+                "projects": ["Live Technical Presentation / Code Walkthrough"],
+                "resources": [
+                    {"name": "Technopark Careers Portal", "url": "https://technopark.org/careers", "type": "Job Board"},
+                    {"name": "Infopark Kochi Opportunities", "url": "https://infopark.in/companies", "type": "Job Board"}
+                ],
+                "estimated_duration": "4–8 weeks",
+                "estimated_cost": "Free",
+                "completion_criterion": "Receive and evaluate offer letters or structured internship placements.",
+                "suggested_next_milestone": "Ongoing Career Growth & Professional Networking",
+            }
+        ]
         return stages
+
+    def _build_school_student_roadmap(
+        self, career: Any, missing: List[str], improve: List[str]
+    ) -> List[Dict[str, Any]]:
+        title = career.title
+        return [
+            {
+                "stage_number": 1,
+                "stage_title": "Academic Foundation & Stream Alignment (Class 10–12)",
+                "target_outcome": f"Ensure strong scholastic foundation in subjects critical for {title}.",
+                "description": "Excel in Mathematics, Physics/Sciences, or Commerce according to required degree eligibility.",
+                "skills": ["Analytical Reasoning", "Mathematics", "Basic Computer Logic"],
+                "topics": ["Board Syllabus Mastery", "Conceptual Understanding", "Logic Building"],
+                "projects": ["School Science / Math Exhibition Project or Simple Scratch/Python Script"],
+                "resources": [
+                    {"name": "DIKSHA / Kerala SCERT Digital Textbooks", "url": "https://diksha.gov.in", "type": "Government Portal"},
+                    {"name": "Khan Academy Foundation Series", "url": "https://khanacademy.org", "type": "Free Education"}
+                ],
+                "estimated_duration": "Ongoing during academic terms",
+                "estimated_cost": "Free",
+                "completion_criterion": "Maintain strong board grades (>80%) in quantitative and scientific subjects.",
+                "suggested_next_milestone": "Stage 2: Entrance Exam & Degree Selection",
+            },
+            {
+                "stage_number": 2,
+                "stage_title": "Entrance Examination Strategy (KEAM / JEE / CUET)",
+                "target_outcome": "Prepare for college admissions in top Kerala and national institutes.",
+                "description": "Systematic practice for engineering/science entrance examinations.",
+                "skills": ["Time Management", "Speed & Accuracy", "Exam Problem Solving"],
+                "topics": ["Entrance Syllabus", "Previous Years Question Papers (PYQs)", "Mock Tests"],
+                "projects": ["Weekly Full-Length Entrance Mock Assessments"],
+                "resources": [
+                    {"name": "National Testing Agency (NTA) Mock Tests", "url": "https://nta.ac.in", "type": "Government Mock Engine"},
+                    {"name": "CEE Kerala KEAM Guidance", "url": "https://cee.kerala.gov.in", "type": "Official Examination Portal"}
+                ],
+                "estimated_duration": "6–12 months",
+                "estimated_cost": "Low (Government & self-study guides)",
+                "completion_criterion": "Consistently score in qualifying percentiles in timed practice exams.",
+                "suggested_next_milestone": "Stage 3: Undergraduate College Degree Enrollment",
+            },
+            {
+                "stage_number": 3,
+                "stage_title": "College Degree Enrollment & Early Coding Exploration",
+                "target_outcome": f"Enroll in recommended degree ({career.required_degree}) and start practical coding.",
+                "description": "Join college coding clubs, learn Python basics, and build first portfolio software.",
+                "skills": ["Python", "Algorithms Basics", "Peer Collaboration"],
+                "topics": ["Programming Fundamentals", "Campus Tech Chapters (IEEE/FOSS)"],
+                "projects": ["First Independent GitHub Coding Project"],
+                "resources": [
+                    {"name": "CS50 Introduction to Computer Science (Harvard/edX)", "url": "https://cs50.harvard.edu", "type": "Free Elite Course"}
+                ],
+                "estimated_duration": "First Year of College (2–4 months)",
+                "estimated_cost": "Free",
+                "completion_criterion": "Complete CS50 or equivalent foundational programming series.",
+                "suggested_next_milestone": "Transition into College Undergraduate Roadmap",
+            }
+        ]
+
+    def _build_working_professional_roadmap(
+        self, career: Any, missing: List[str], improve: List[str]
+    ) -> List[Dict[str, Any]]:
+        title = career.title
+        return [
+            {
+                "stage_number": 1,
+                "stage_title": "Transferable Skills Inventory & Evening Upskilling",
+                "target_outcome": f"Map existing workplace experience to {title} requirements without leaving current job.",
+                "description": "Dedicate 8–10 hours per week outside work hours to bridge critical prerequisites.",
+                "skills": (missing[:2] or ["Target Domain Tools"]),
+                "topics": ["Core Technical Bridge", "Modern Tooling", "Industry Vocabulary"],
+                "projects": ["Mini-project automating a workflow in current domain using new tools"],
+                "resources": [
+                    {"name": "Self-Paced Specialization (Coursera / edX)", "url": "https://coursera.org", "type": "Flexible Course"},
+                    {"name": "Documentation & Hands-on Quickstarts", "url": "https://github.com", "type": "Practical Labs"}
+                ],
+                "estimated_duration": "6–8 weeks (8 hrs/week)",
+                "estimated_cost": "₹0 – ₹3,000 (Optional certification)",
+                "completion_criterion": "Complete foundational hands-on certification or capstone module.",
+                "suggested_next_milestone": "Stage 2: Domain Pivot Project",
+            },
+            {
+                "stage_number": 2,
+                "stage_title": "Domain Pivot Capstone & Proof of Execution",
+                "target_outcome": "Build a substantial project demonstrating direct capability in the new domain.",
+                "description": "Create a production-grade portfolio project that replaces lack of formal job title history.",
+                "skills": ["End-to-End Implementation", "Deployment", "Architecture"],
+                "topics": ["System Design", "Cloud Deployment", "Case Study Writing"],
+                "projects": [f"Full-Stack / Applied Capstone for {title} solving a concrete business problem"],
+                "resources": [
+                    {"name": "Open-Source Community Contributions", "url": "https://github.com/explore", "type": "Practical Contribution"}
+                ],
+                "estimated_duration": "8–10 weeks (10 hrs/week)",
+                "estimated_cost": "Free",
+                "completion_criterion": "Publish a comprehensive LinkedIn article and GitHub project detailing problem, solution, and metrics.",
+                "suggested_next_milestone": "Stage 3: Internal Transfer or Lateral Market Outreach",
+            },
+            {
+                "stage_number": 3,
+                "stage_title": "Internal Transfer or Targeted Career Pivot",
+                "target_outcome": f"Transition into {title} via internal team lateral movement or targeted hiring.",
+                "description": "First explore adjacent teams in current employer, then engage recruiters with modernized resume.",
+                "skills": ["Strategic Networking", "Interview Narrative", "Salary Negotiation"],
+                "topics": ["Framing Career Transition Story", "Technical Screen Mastery"],
+                "projects": ["Interview Portfolio Deck"],
+                "resources": [
+                    {"name": "LinkedIn Career Transition Network", "url": "https://linkedin.com", "type": "Networking"}
+                ],
+                "estimated_duration": "8–12 weeks",
+                "estimated_cost": "Free",
+                "completion_criterion": "Secure role transition or external offer aligned with new career path.",
+                "suggested_next_milestone": "Continuous Growth & Leadership Pathway",
+            }
+        ]
+
+
+roadmap_agent = RoadmapAgent()
